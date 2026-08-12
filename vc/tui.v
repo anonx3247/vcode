@@ -70,8 +70,11 @@ pub fn handle_tui_command(mut state TuiState, command string) !string {
 	parts := command.split(' ')
 	match parts[0] {
 		'/model' {
-			models := available_models()!
-			choice := if parts.len > 1 { parts[1] } else { fzf_select(models, 'model> ')! }
+			choice := if parts.len > 1 {
+				parts[1]
+			} else {
+				fzf_select(available_models()!, 'model> ')!
+			}
 			if choice == '' { return '' }
 			parse_model_ref(choice)!
 			state.meta.model = choice

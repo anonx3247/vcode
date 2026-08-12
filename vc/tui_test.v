@@ -50,6 +50,24 @@ fn test_skill_discovery_does_not_load_content() {
 	assert state.skill_content == ''
 }
 
+fn test_direct_model_selection_does_not_discover_models() {
+	old_state := os.getenv('XDG_STATE_HOME')
+	tmp := os.join_path(os.temp_dir(), 'vc-tui-model-${os.getpid()}')
+	os.setenv('XDG_STATE_HOME', tmp, true)
+	defer {
+		os.setenv('XDG_STATE_HOME', old_state, true)
+		os.rmdir_all(tmp) or {}
+	}
+	meta := new_session_meta('openai:test', 'low', os.temp_dir())
+	save_session_meta(meta) or { panic(err) }
+	mut state := TuiState{
+		meta: meta
+	}
+	message := handle_tui_command(mut state, '/model isara:test') or { panic(err) }
+	assert message == 'model: isara:test'
+	assert state.meta.model == 'isara:test'
+}
+
 fn test_terminal_control_corpus_is_removed() {
 	for sample in ['\033]0;owned\007', '\033[31mred\033[0m', '\000x', '\033[999999z'] {
 		clean := sanitize_terminal(sample)

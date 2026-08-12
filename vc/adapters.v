@@ -2,6 +2,7 @@ module vc
 
 import net.http
 import os
+import time
 
 pub enum StreamKind {
 	text
@@ -30,10 +31,12 @@ pub interface ProviderAdapter {
 @[heap]
 struct StreamCapture {
 mut:
-	provider string
-	parser   SseParser
-	events   []StreamEvent
-	failure  string
+	provider    string
+	parser      SseParser
+	events      []StreamEvent
+	failure     string
+	http_status int
+	error_body  string
 }
 
 fn capture_stream_body(request &http.Request, chunk []u8, body_read u64, expected u64, status int) ! {
@@ -41,7 +44,8 @@ fn capture_stream_body(request &http.Request, chunk []u8, body_read u64, expecte
 	_ = expected
 	mut capture := unsafe { &StreamCapture(request.user_ptr) }
 	if status < 200 || status >= 300 {
-		capture.failure = 'provider returned HTTP ${status}'
+		capture.http_status = status
+		capture.error_body = bounded_text(capture.error_body + chunk.bytestr(), 16 * 1024)
 		return
 	}
 	messages := capture.parser.feed(chunk.bytestr()) or {
@@ -75,6 +79,9 @@ pub fn stream_completion(model_ref string, prompt string, cfg Config) ![]StreamE
 	key := provider_api_key(kind, provider)
 	if key == '' { return error('missing API key for ${model.provider}') }
 	base_url := provider_base_url(kind, provider)
+	if provider.base_url != '' || provider.base_url_env != '' {
+		return curl_stream_completion(kind, base_url, key, model.model, prompt)!
+	}
 	mut request := if kind == 'openai' {
 		OpenAIAdapter{
 			api_key:  key
@@ -96,10 +103,94 @@ pub fn stream_completion(model_ref string, prompt string, cfg Config) ![]StreamE
 	request.on_progress_body = capture_stream_body
 	request.stop_copying_limit = 0
 	request.max_retries = 2
+	request.enable_http2 = false
 	_ := request.do()!
+	if capture.http_status != 0 {
+		message := sanitize_terminal(capture.error_body).replace('\n', ' ').trim_space()
+		return error('provider returned HTTP ${capture.http_status}${if message == '' {
+			''
+		} else {
+			': ${message}'
+		}}')
+	}
 	if capture.failure != '' { return error(capture.failure) }
 	capture.parser.finish() or {}
 	return capture.events.clone()
+}
+
+fn curl_stream_completion(kind string, base_url string, key string, model string, prompt string) ![]StreamEvent {
+	curl := os.find_abs_path_of_executable('curl') or {
+		return error('curl is required for custom provider endpoints')
+	}
+	tmp := os.join_path(os.temp_dir(), 'vc-provider-${os.getpid()}-${time.now().unix_nano()}')
+	os.mkdir_all(tmp)!
+	os.chmod(tmp, 0o700)!
+	defer { os.rmdir_all(tmp) or {} }
+	headers_path := os.join_path(tmp, 'headers')
+	body_path := os.join_path(tmp, 'body.json')
+	mut headers := 'Content-Type: application/json\n'
+	mut body := ''
+	mut endpoint := ''
+	if kind == 'openai' {
+		headers += 'Authorization: Bearer ${key}\n'
+		body = '{"model":"${json_escape(model)}","input":"${json_escape(prompt)}","stream":true}'
+		endpoint = '${base_url}/responses'
+	} else {
+		headers += 'x-api-key: ${key}\nanthropic-version: 2023-06-01\n'
+		body = '{"model":"${json_escape(model)}","max_tokens":4096,"stream":true,"messages":[{"role":"user","content":"${json_escape(prompt)}"}]}'
+		endpoint = '${base_url}/messages'
+	}
+	os.write_file(headers_path, headers)!
+	os.chmod(headers_path, 0o600)!
+	os.write_file(body_path, body)!
+	os.chmod(body_path, 0o600)!
+	mut process := os.new_process(curl)
+	process.set_args(['--silent', '--show-error', '--no-buffer', '--fail-with-body', '--max-time',
+		'300', '--request', 'POST', '--header', '@${headers_path}', '--data-binary', '@${body_path}',
+		endpoint])
+	process.set_redirect_stdio()
+	process.run()
+	mut parser := new_sse_parser(1024 * 1024)
+	mut events := []StreamEvent{}
+	mut raw_error := ''
+	mut errors := ''
+	for process.is_alive() {
+		raw_error = consume_provider_chunk(kind, process.stdout_read(), mut parser, mut events,
+			raw_error)!
+		errors = bounded_text(errors + process.stderr_read(), 16 * 1024)
+		time.sleep(5 * time.millisecond)
+	}
+	process.wait()
+	raw_error = consume_provider_chunk(kind, process.stdout_slurp(), mut parser, mut events,
+		raw_error)!
+	errors = bounded_text(errors + process.stderr_slurp(), 16 * 1024)
+	code := process.code
+	process.close()
+	if code != 0 {
+		message :=
+			sanitize_terminal(if raw_error.trim_space() != '' { raw_error } else { errors }).replace('\n', ' ').trim_space()
+		return error('provider request failed (curl ${code})${if message == '' {
+			''
+		} else {
+			': ${message}'
+		}}')
+	}
+	parser.finish() or {}
+	return events
+}
+
+fn consume_provider_chunk(kind string, chunk string, mut parser SseParser, mut events []StreamEvent, raw_error string) !string {
+	if chunk == '' { return raw_error }
+	updated_raw_error := bounded_text(raw_error + chunk, 16 * 1024)
+	for message in parser.feed(chunk)! {
+		decoded := if kind == 'openai' {
+			OpenAIAdapter{}.decode(message)!
+		} else {
+			AnthropicAdapter{}.decode(message)!
+		}
+		events << decoded
+	}
+	return updated_raw_error
 }
 
 pub fn provider_kind(name string, provider ProviderConfig) !string {

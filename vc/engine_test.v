@@ -85,3 +85,19 @@ fn test_sse_limit_is_enforced() {
 	}
 	assert false
 }
+
+fn test_custom_transport_reuses_incremental_sse_decoder() {
+	mut parser := new_sse_parser(1024)
+	mut events := []StreamEvent{}
+	mut raw := ''
+	raw = consume_provider_chunk('openai',
+		'event: response.output_text.delta\ndata: {"type":"response.output_text.delta",', mut
+		parser, mut events, raw) or { panic(err) }
+	raw = consume_provider_chunk('openai', '"delta":"OK"}\n\n', mut parser, mut events, raw) or {
+		panic(err)
+	}
+	assert raw.contains('"delta":"OK"')
+	assert events.len == 1
+	assert events[0].kind == .text
+	assert events[0].text == 'OK'
+}
