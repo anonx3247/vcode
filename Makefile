@@ -4,7 +4,7 @@ V ?= v
 
 build:
 	mkdir -p bin
-	$(V) -o bin/vc cmd/vc
+	$(V) -o bin/vc cmd/vcode
 
 test:
 	$(V) test vc
@@ -13,5 +13,5 @@ fmt:
 	$(V) fmt -w cmd vc
 
 check:
-	$(V) -check cmd/vc
+	$(V) -check cmd/vcode
 	$(V) test vc
