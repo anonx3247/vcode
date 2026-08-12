@@ -58,23 +58,12 @@ pub fn model_catalog(cfg Config) []string {
 }
 
 fn fetch_provider_models(name string, provider ProviderConfig) ![]string {
-	key := if provider.api_key != '' {
-		provider.api_key
-	} else if name == 'openai' {
-		os.getenv('OPENAI_API_KEY')
-	} else {
-		os.getenv('ANTHROPIC_API_KEY')
-	}
+	kind := provider_kind(name, provider)!
+	key := provider_api_key(kind, provider)
 	if key == '' { return error('no API key') }
-	base := if provider.base_url != '' {
-		provider.base_url.trim_right('/')
-	} else if name == 'openai' {
-		'https://api.openai.com/v1'
-	} else {
-		'https://api.anthropic.com/v1'
-	}
+	base := provider_base_url(kind, provider)
 	mut request := http.new_request(.get, '${base}/models', '')
-	if name == 'openai' {
+	if kind == 'openai' {
 		request.add_header(.authorization, 'Bearer ${key}')
 	} else {
 		request.add_custom_header('x-api-key', key)!
