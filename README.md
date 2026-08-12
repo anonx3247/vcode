@@ -22,6 +22,7 @@ vc --rpc
 ```
 
 The interactive UI provides `/model [provider:model]`, `/skill [skill-name]`, `/resume`, `/goal`, and `/review`. `/model`, `/skill`, and `/resume` use `fzf`; ordinary CLI lists stay plain and pipe-friendly. Skills are discovered at startup but their contents are read only after an explicit `/skill` command.
+Running `vc` without a prompt starts a new interactive session. If its configured default provider is unavailable, it opens the model picker before creating the session.
 
 Example configuration:
 

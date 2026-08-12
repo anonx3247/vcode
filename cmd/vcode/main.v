@@ -28,7 +28,10 @@ fn run(args []string) ! {
 		run_session(args[1..])!
 		return
 	}
-	if args.len == 0 { return error('usage: vc [options] <prompt>') }
+	if args.len == 0 {
+		start_empty_session()!
+		return
+	}
 	start_prompt(args.join(' '))!
 }
 
@@ -113,6 +116,23 @@ fn start_prompt(prompt string) ! {
 	}
 	vc.start_session_worker(meta.id)!
 	if os.is_atty(0) > 0 { vc.run_tui(meta)! }
+}
+
+fn start_empty_session() ! {
+	if os.is_atty(0) <= 0 {
+		return error('interactive session requires a terminal; use vc <prompt> for noninteractive input')
+	}
+	cfg := vc.load_config(vc.config_path())!
+	mut model := cfg.default_model
+	default_ref := vc.parse_model_ref(model)!
+	if default_ref.provider !in cfg.providers && cfg.providers.len > 0 {
+		model = vc.fzf_select(vc.model_catalog(cfg)!, 'model> ')!
+		if model == '' { return error('model selection cancelled') }
+	}
+	meta := vc.new_session_meta(model, cfg.effort, os.getwd())
+	vc.save_session_meta(meta)!
+	vc.start_session_worker(meta.id)!
+	vc.run_tui(meta)!
 }
 
 fn run_stdio_rpc() ! {
