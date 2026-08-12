@@ -35,8 +35,7 @@ fn run(args []string) ! {
 fn run_model(args []string) ! {
 	mut cfg := vc.load_config(vc.config_path())!
 	if args == ['list'] {
-		models := ['openai:gpt-5.2', 'openai:gpt-5-mini', 'anthropic:claude-sonnet-4-5',
-			'anthropic:claude-opus-4-5']
+		models := vc.model_catalog(cfg)
 		println(models.join('\n'))
 		return
 	}
@@ -63,8 +62,27 @@ fn run_session(args []string) ! {
 		return
 	}
 	if args.len >= 2 && args[0] == 'attach' {
-		meta := vc.load_session_meta(args[1])!
-		println('attached ${meta.id} (${meta.model}) in ${meta.cwd}')
+		mut meta := vc.load_session_meta(args[1])!
+		if os.real_path(os.getwd()) != meta.cwd {
+			move_allowed := '--move-session' in args
+			mut confirmed := move_allowed
+			if !move_allowed && os.is_atty(0) > 0 {
+				print('Move session from ${meta.cwd} to ${os.getwd()}? [y/N] ')
+				confirmed = os.get_line().trim_space().to_lower() in ['y', 'yes']
+			}
+			if confirmed {
+				mut worker := vc.new_session_worker(meta)!
+				_ =
+					worker.handle_rpc('{"jsonrpc":"2.0","id":1,"method":"session.move","params":{"cwd":"${escape(os.getwd())}"}}')
+				meta = worker.meta
+			}
+		}
+		vc.start_session_worker(meta.id) or {}
+		if os.is_atty(0) > 0 {
+			vc.run_tui(meta)!
+		} else {
+			println('attached ${meta.id} (${meta.model}) in ${meta.cwd}')
+		}
 		return
 	}
 	return error('usage: vc session list | vc session attach <id>')
@@ -77,8 +95,24 @@ fn start_prompt(prompt string) ! {
 	mut worker := vc.new_session_worker(meta)!
 	request := '{"jsonrpc":"2.0","id":1,"method":"session.message","params":{"message":"${escape(prompt)}"}}'
 	_ = worker.handle_rpc(request)
+	events := vc.stream_completion(meta.model, prompt, cfg) or {
+		eprintln('vc: ${err}; session ${meta.id} remains available')
+		[]vc.StreamEvent{}
+	}
+	mut answer := ''
+	for event in events {
+		if event.kind == .text {
+			answer += event.text
+			print(event.text)
+		}
+	}
+	if answer != '' {
+		println('')
+		assistant := worker.events.push('assistant', answer)
+		worker.journal.append(assistant.seq, assistant.kind, assistant.data)!
+	}
 	vc.start_session_worker(meta.id)!
-	println('session ${meta.id}: ${prompt}')
+	if os.is_atty(0) > 0 { vc.run_tui(meta)! }
 }
 
 fn run_stdio_rpc() ! {

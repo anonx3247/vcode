@@ -1,0 +1,16 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install V 0.5.2
+        run: scripts/bootstrap-v.sh
+      - name: Check
+        run: VMODULES="$RUNNER_TEMP/vmodules" make V="$PWD/.tmp/v/v" check build
