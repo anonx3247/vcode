@@ -4,6 +4,23 @@ import json
 import os
 import time
 
+pub struct ProviderSmallModel {
+pub:
+	model  string
+	config Config
+}
+
+pub fn (provider ProviderSmallModel) complete(system string, prompt string, max_tokens int) !string {
+	_ = max_tokens
+	events := stream_completion(provider.model, '${system}\n\n${prompt}', provider.config)!
+	mut result := ''
+	for event in events {
+		if event.kind == .text { result += event.text }
+		if event.kind == .error { return error(event.text) }
+	}
+	return result
+}
+
 pub struct RecapScheduler {
 pub mut:
 	completed_turns int

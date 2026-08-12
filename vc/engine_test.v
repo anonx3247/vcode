@@ -48,3 +48,40 @@ fn test_shell_timeout_and_working_directory() {
 	timed := run_shell('sleep 2', os.temp_dir(), 20 * time.millisecond, 4096)
 	assert timed.timed_out
 }
+
+fn test_background_job_output_cursor() {
+	mut manager := ShellJobManager{
+		max_output: 4096
+	}
+	id := manager.start('printf one; sleep 0.05; printf two', os.temp_dir()) or { panic(err) }
+	mut cursor := u64(0)
+	mut output := ''
+	for _ in 0 .. 100 {
+		read := manager.read(id, cursor) or { panic(err) }
+		output += read.output
+		cursor = read.next_cursor
+		if read.done { break
+		 }
+		time.sleep(10 * time.millisecond)
+	}
+	assert output.contains('one')
+	assert output.contains('two')
+}
+
+fn test_malformed_stream_corpus_never_panics() {
+	corpus := ['', '\r', '\n', '\033[2J', 'data:', 'event: x\n', 'data: {not-json}\n\n',
+		'x'.repeat(2048)]
+	for sample in corpus {
+		mut parser := new_sse_parser(1024)
+		_ = parser.feed(sample) or { continue }
+	}
+}
+
+fn test_sse_limit_is_enforced() {
+	mut parser := new_sse_parser(8)
+	parser.feed('123456789') or {
+		assert err.msg().contains('exceeds')
+		return
+	}
+	assert false
+}

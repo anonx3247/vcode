@@ -75,6 +75,22 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 			save_session_meta(worker.meta)!
 			return json.encode(event)
 		}
+		'session.append' {
+			kind := json_field(params, 'kind')
+			data := json_field(params, 'data')
+			if kind == '' { return error('kind is required') }
+			event := worker.events.push(kind, data)
+			worker.journal.append(event.seq, event.kind, event.data)!
+			return json.encode(event)
+		}
+		'session.model' {
+			model := json_field(params, 'model')
+			parse_model_ref(model)!
+			worker.meta.model = model
+			worker.meta.updated_ms = time.now().unix_milli()
+			save_session_meta(worker.meta)!
+			return json.encode(worker.meta)
+		}
 		'session.subscribe' {
 			cursor := json_int_field(params, 'cursor')
 			return json.encode(worker.events.after(u64(cursor)))
