@@ -22,11 +22,13 @@ pub fn parse_model_ref(raw string) !ModelRef {
 
 pub struct ProviderConfig {
 pub mut:
-	name     string
-	kind     string
-	base_url string
-	api_key  string
-	alias    string
+	name         string
+	kind         string
+	base_url     string
+	base_url_env string
+	api_key      string
+	api_key_env  string
+	alias        string
 }
 
 pub struct Config {
@@ -73,7 +75,9 @@ pub fn load_config(path string) !Config {
 			match key {
 				'kind' { provider.kind = value }
 				'base_url' { provider.base_url = value }
+				'base_url_env' { provider.base_url_env = value }
 				'api_key' { provider.api_key = value }
+				'api_key_env' { provider.api_key_env = value }
 				'alias' { provider.alias = value }
 				else {}
 			}
@@ -98,9 +102,11 @@ pub fn save_config(cfg Config, path string) ! {
 	mut body := 'default_model = "${cfg.default_model}"\neffort = "${cfg.effort}"\nsmall_model = "${cfg.small_model}"\n'
 	for name, provider in cfg.providers {
 		body += '\n[providers.${name}]\nkind = "${provider.kind}"\nbase_url = "${provider.base_url}"\n'
+		if provider.base_url_env != '' { body += 'base_url_env = "${provider.base_url_env}"\n' }
 		if provider.api_key != '' {
 			body += 'api_key = "${provider.api_key}"\n'
 		}
+		if provider.api_key_env != '' { body += 'api_key_env = "${provider.api_key_env}"\n' }
 		if provider.alias != '' {
 			body += 'alias = "${provider.alias}"\n'
 		}

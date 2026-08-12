@@ -71,37 +71,25 @@ pub fn stream_completion(model_ref string, prompt string, cfg Config) ![]StreamE
 			name: model.provider
 		}
 	}
-	key := if provider.api_key != '' {
-		provider.api_key
-	} else if model.provider == 'openai' {
-		os.getenv('OPENAI_API_KEY')
-	} else {
-		os.getenv('ANTHROPIC_API_KEY')
-	}
+	kind := provider_kind(model.provider, provider)!
+	key := provider_api_key(kind, provider)
 	if key == '' { return error('missing API key for ${model.provider}') }
-	mut request := if model.provider == 'openai' {
+	base_url := provider_base_url(kind, provider)
+	mut request := if kind == 'openai' {
 		OpenAIAdapter{
 			api_key:  key
-			base_url: if provider.base_url != '' {
-				provider.base_url
-			} else {
-				'https://api.openai.com/v1'
-			}
+			base_url: base_url
 		}.build_request(model.model, prompt)!
-	} else if model.provider == 'anthropic' {
+	} else if kind == 'anthropic' {
 		AnthropicAdapter{
 			api_key:  key
-			base_url: if provider.base_url != '' {
-				provider.base_url
-			} else {
-				'https://api.anthropic.com/v1'
-			}
+			base_url: base_url
 		}.build_request(model.model, prompt)!
 	} else {
-		return error('unsupported provider adapter: ${model.provider}')
+		return error('unsupported provider kind: ${kind}')
 	}
 	mut capture := &StreamCapture{
-		provider: model.provider
+		provider: kind
 		parser:   new_sse_parser(1024 * 1024)
 	}
 	request.user_ptr = voidptr(capture)
@@ -112,6 +100,32 @@ pub fn stream_completion(model_ref string, prompt string, cfg Config) ![]StreamE
 	if capture.failure != '' { return error(capture.failure) }
 	capture.parser.finish() or {}
 	return capture.events.clone()
+}
+
+pub fn provider_kind(name string, provider ProviderConfig) !string {
+	kind := if provider.kind != '' { provider.kind } else { name }
+	if kind !in ['openai', 'anthropic'] {
+		return error('provider ${name} must set kind to openai or anthropic')
+	}
+	return kind
+}
+
+fn provider_api_key(kind string, provider ProviderConfig) string {
+	if provider.api_key != '' { return provider.api_key }
+	if provider.api_key_env != '' { return os.getenv(provider.api_key_env) }
+	return os.getenv(if kind == 'openai' { 'OPENAI_API_KEY' } else { 'ANTHROPIC_API_KEY' })
+}
+
+fn provider_base_url(kind string, provider ProviderConfig) string {
+	if provider.base_url != '' { return provider.base_url.trim_right('/') }
+	if provider.base_url_env != '' && os.getenv(provider.base_url_env) != '' {
+		return os.getenv(provider.base_url_env).trim_right('/')
+	}
+	return if kind == 'openai' {
+		'https://api.openai.com/v1'
+	} else {
+		'https://api.anthropic.com/v1'
+	}
 }
 
 pub struct OpenAIAdapter {

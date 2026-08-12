@@ -28,3 +28,17 @@ fn test_instruction_import_cycles() {
 	assert loaded.content.contains('extra')
 	assert loaded.files.len >= 2
 }
+
+fn test_custom_provider_kind_and_environment_routing() {
+	os.setenv('VC_TEST_BASE_URL', 'https://proxy.example/v1', true)
+	os.setenv('VC_TEST_API_KEY', 'test-key', true)
+	provider := ProviderConfig{
+		name:         'isara'
+		kind:         'openai'
+		base_url_env: 'VC_TEST_BASE_URL'
+		api_key_env:  'VC_TEST_API_KEY'
+	}
+	assert provider_kind('isara', provider) or { panic(err) } == 'openai'
+	assert provider_base_url('openai', provider) == 'https://proxy.example/v1'
+	assert provider_api_key('openai', provider) == 'test-key'
+}
