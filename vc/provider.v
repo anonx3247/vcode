@@ -61,6 +61,9 @@ fn fetch_provider_models(name string, provider ProviderConfig) ![]string {
 	key := provider_api_key(kind, provider)
 	if key == '' { return error('no API key') }
 	base := provider_base_url(kind, provider)
+	if provider.base_url != '' || provider.base_url_env != '' {
+		return curl_fetch_provider_models(kind, base, key)!
+	}
 	mut request := http.new_request(.get, '${base}/models', '')
 	request.enable_http2 = false
 	request.read_timeout = 10 * time.second
@@ -75,8 +78,63 @@ fn fetch_provider_models(name string, provider ProviderConfig) ![]string {
 	if response.status_code < 200 || response.status_code >= 300 {
 		return error('HTTP ${response.status_code}')
 	}
+	return parse_model_ids(response.body)!
+}
+
+fn curl_fetch_provider_models(kind string, base_url string, key string) ![]string {
+	curl := os.find_abs_path_of_executable('curl') or {
+		return error('curl is required for custom provider endpoints')
+	}
+	tmp := os.join_path(os.temp_dir(), 'vc-models-${os.getpid()}-${time.now().unix_nano()}')
+	os.mkdir_all(tmp)!
+	os.chmod(tmp, 0o700)!
+	defer { os.rmdir_all(tmp) or {} }
+	headers_path := os.join_path(tmp, 'headers')
+	response_path := os.join_path(tmp, 'response.json')
+	mut headers := ''
+	if kind == 'openai' {
+		headers = 'Authorization: Bearer ${key}\n'
+	} else {
+		headers = 'x-api-key: ${key}\nanthropic-version: 2023-06-01\n'
+	}
+	os.write_file(headers_path, headers)!
+	os.chmod(headers_path, 0o600)!
+	mut process := os.new_process(curl)
+	process.set_args(['--silent', '--show-error', '--max-time', '10', '--max-filesize', '4194304',
+		'--header', '@${headers_path}', '--output', response_path, '--write-out', '%{http_code}',
+		'${base_url}/models'])
+	process.set_redirect_stdio()
+	process.run()
+	process.wait()
+	status_text := bounded_text(process.stdout_slurp(), 32).trim_space()
+	error_text := bounded_text(process.stderr_slurp(), 16 * 1024)
+	code := process.code
+	process.close()
+	if code != 0 {
+		message := sanitize_terminal(error_text).replace('\n', ' ').trim_space()
+		return error('model request failed (curl ${code})${if message == '' {
+			''
+		} else {
+			': ${message}'
+		}}')
+	}
+	status := status_text.int()
+	if status < 200 || status >= 300 {
+		return error('HTTP ${status}')
+	}
+	if !os.exists(response_path) {
+		return error('empty model response')
+	}
+	body := os.read_file(response_path)!
+	if body.len > 4 * 1024 * 1024 {
+		return error('model response exceeds 4 MiB')
+	}
+	return parse_model_ids(body)!
+}
+
+fn parse_model_ids(body string) ![]string {
 	mut models := []string{}
-	mut rest := response.body
+	mut rest := body
 	for rest.contains('"id"') {
 		index := rest.index('"id"') or { break }
 		rest = rest[index..]

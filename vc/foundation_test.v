@@ -50,3 +50,18 @@ fn test_model_catalog_requires_configured_providers() {
 	}
 	assert false
 }
+
+fn test_parse_model_ids_deduplicates_and_preserves_provider_order() {
+	models := parse_model_ids('{"data":[{"id":"gpt-5.6-sol"},{"id":"claude-opus-5"},{"id":"gpt-5.6-sol"}]}') or {
+		panic(err)
+	}
+	assert models == ['gpt-5.6-sol', 'claude-opus-5']
+}
+
+fn test_parse_model_ids_rejects_empty_responses() {
+	parse_model_ids('{"data":[]}') or {
+		assert err.msg() == 'empty model list'
+		return
+	}
+	assert false
+}
