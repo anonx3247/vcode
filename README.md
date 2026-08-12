@@ -41,6 +41,7 @@ api_key_env = "OPENAI_API_KEY"
 ```
 
 API keys can be set in provider configuration or supplied as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `BRAVE_API_KEY` environment variables.
+`vc model list` queries only providers declared in this file, caches successful results for 15 minutes, and reports discovery failures instead of inventing fallback models.
 
 ## Development
 
