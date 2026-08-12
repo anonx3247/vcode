@@ -31,27 +31,26 @@ pub fn cached_models(provider string, max_age time.Duration) ![]string {
 	return cache.models.map('${provider}:${it}')
 }
 
-pub fn model_catalog(cfg Config) []string {
+pub fn model_catalog(cfg Config) ![]string {
 	mut result := []string{}
-	mut providers := cfg.providers.clone()
-	if 'openai' !in providers { providers['openai'] = ProviderConfig{
-			name: 'openai'
-		} }
-	if 'anthropic' !in providers { providers['anthropic'] = ProviderConfig{
-			name: 'anthropic'
-		} }
-	for name, provider in providers {
+	mut failures := []string{}
+	if cfg.providers.len == 0 {
+		return error('no providers configured in ${config_path()}')
+	}
+	for name, provider in cfg.providers {
 		if cached := cached_models(name, 15 * time.minute) {
 			result << cached
 			continue
 		}
-		models := fetch_provider_models(name, provider) or { continue }
+		models := fetch_provider_models(name, provider) or {
+			failures << '${name}: ${err.msg()}'
+			continue
+		}
 		cache_models(name, models) or {}
 		result << models.map('${name}:${it}')
 	}
 	if result.len == 0 {
-		return ['openai:gpt-5.2', 'openai:gpt-5-mini', 'anthropic:claude-sonnet-4-5',
-			'anthropic:claude-opus-4-5']
+		return error('model discovery failed: ${failures.join('; ')}')
 	}
 	result.sort()
 	return result
@@ -63,6 +62,9 @@ fn fetch_provider_models(name string, provider ProviderConfig) ![]string {
 	if key == '' { return error('no API key') }
 	base := provider_base_url(kind, provider)
 	mut request := http.new_request(.get, '${base}/models', '')
+	request.enable_http2 = false
+	request.read_timeout = 10 * time.second
+	request.write_timeout = 10 * time.second
 	if kind == 'openai' {
 		request.add_header(.authorization, 'Bearer ${key}')
 	} else {

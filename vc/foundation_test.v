@@ -42,3 +42,11 @@ fn test_custom_provider_kind_and_environment_routing() {
 	assert provider_base_url('openai', provider) == 'https://proxy.example/v1'
 	assert provider_api_key('openai', provider) == 'test-key'
 }
+
+fn test_model_catalog_requires_configured_providers() {
+	model_catalog(Config{}) or {
+		assert err.msg().contains('no providers configured')
+		return
+	}
+	assert false
+}

@@ -35,7 +35,7 @@ fn run(args []string) ! {
 fn run_model(args []string) ! {
 	mut cfg := vc.load_config(vc.config_path())!
 	if args == ['list'] {
-		models := vc.model_catalog(cfg)
+		models := vc.model_catalog(cfg)!
 		println(models.join('\n'))
 		return
 	}

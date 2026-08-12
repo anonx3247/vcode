@@ -70,7 +70,7 @@ pub fn handle_tui_command(mut state TuiState, command string) !string {
 	parts := command.split(' ')
 	match parts[0] {
 		'/model' {
-			models := available_models()
+			models := available_models()!
 			choice := if parts.len > 1 { parts[1] } else { fzf_select(models, 'model> ')! }
 			if choice == '' { return '' }
 			parse_model_ref(choice)!
@@ -207,8 +207,8 @@ fn run_tui_turn(mut state TuiState, message string) ! {
 	}
 }
 
-pub fn available_models() []string {
-	return model_catalog(load_config(config_path()) or { Config{} })
+pub fn available_models() ![]string {
+	return model_catalog(load_config(config_path())!)!
 }
 
 pub fn fzf_select(items []string, prompt string) !string {
