@@ -1,10 +1,18 @@
 V ?= v
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+DESTDIR ?=
+INSTALL ?= install
 
-.PHONY: build test fmt check
+.PHONY: build install test fmt check
 
 build:
 	mkdir -p bin
 	$(V) -o bin/vc cmd/vcode
+
+install: build
+	$(INSTALL) -d "$(DESTDIR)$(BINDIR)"
+	$(INSTALL) -m 0755 bin/vc "$(DESTDIR)$(BINDIR)/vc"
 
 test:
 	$(V) test vc
