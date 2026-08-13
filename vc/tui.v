@@ -171,10 +171,17 @@ pub fn handle_tui_command(mut state TuiState, command string) !string {
 		'/review' {
 			if parts.len == 1 { return error('usage: /review <instructions>') }
 			context := build_review_context(state.meta.cwd, state.meta.model)!
-			return run_review(ProviderSmallModel{
-				model:  state.meta.model
-				config: load_config(config_path())!
-			}, context, parts[1..].join(' '))!
+			cfg := load_config(config_path())!
+			println('\x1b[1;34mReview started${ansi_reset}')
+			result := run_review_agent_turn(state.meta.model, review_prompt(context,
+				parts[1..].join(' ')), context.cwd, cfg) or {
+				println('\x1b[1;31mReview finished · failed${ansi_reset}')
+				return err
+			}
+			println('\x1b[1;34mReview finished${ansi_reset}')
+			_ = session_rpc(state.meta.id,
+				'{"jsonrpc":"2.0","id":5,"method":"session.append","params":{"kind":"review","data":"${json_escape(result.answer)}"}}')!
+			return ''
 		}
 		else {
 			return error('unknown command: ${parts[0]}')

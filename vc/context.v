@@ -103,7 +103,7 @@ pub fn build_session_prompt(session_id string, instructions string, skill string
 			continue
 		}
 		if record.kind !in ['user', 'assistant', 'system', 'tool_call', 'tool_result', 'summary',
-			'abridged_tools'] {
+			'abridged_tools', 'review'] {
 			continue
 		}
 		items << ContextItem{
@@ -156,6 +156,7 @@ fn context_kind_label(kind string) string {
 		'tool_result' { 'Tool result' }
 		'summary' { 'Earlier history summary' }
 		'abridged_tools' { 'Earlier tool activity' }
+		'review' { 'Review findings' }
 		else { kind }
 	}
 }

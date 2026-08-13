@@ -33,6 +33,19 @@ fn test_edit_tool_schema_allows_new_file_creation_without_fingerprint() {
 	assert !edit.contains('"required":["path","old","replacement","fingerprint"]')
 }
 
+fn test_review_tool_schema_excludes_edit() {
+	tools := review_tool_definitions()
+	assert tools.contains('"name":"Read"')
+	assert tools.contains('"name":"Shell"')
+	assert tools.contains('"name":"WebSearch"')
+	assert !tools.contains('"name":"Edit"')
+	execute_agent_tool_with_policy('Edit', '{"path":"x","old":"a","replacement":"b"}', '.', false) or {
+		assert err.msg().contains('unavailable during review')
+		return
+	}
+	assert false
+}
+
 fn test_agent_stream_collects_text_and_completed_tool_calls() {
 	mut parser := new_sse_parser(4096)
 	mut result := AgentStreamResponse{}
@@ -47,4 +60,11 @@ fn test_agent_stream_collects_text_and_completed_tool_calls() {
 	assert result.calls.len == 1
 	assert result.calls[0].name == 'Shell'
 	assert result.calls[0].call_id == 'call-1'
+}
+
+fn test_provider_failure_does_not_dump_buffered_sse() {
+	sse := 'data: {"type":"response.created","response":{"large":"secret"}}\n\ndata: {"type":"response.in_progress"}'
+	assert provider_failure_detail(sse, '') == ''
+	assert provider_failure_detail(sse, 'curl: (28) Operation timed out') == 'curl: (28) Operation timed out'
+	assert provider_failure_detail('{"error":"bad key"}', '') == '{"error":"bad key"}'
 }

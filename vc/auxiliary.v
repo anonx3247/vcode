@@ -54,8 +54,9 @@ pub mut:
 }
 
 pub fn save_goal(session_id string, state GoalState) ! {
-	os.write_file(os.join_path(session_dir(session_id), 'goal.json'),
-		json2.encode(state, escape_unicode: true))!
+	os.write_file(os.join_path(session_dir(session_id), 'goal.json'), json2.encode(state,
+		escape_unicode: true
+	))!
 }
 
 pub fn load_goal(session_id string) GoalState {
@@ -89,6 +90,14 @@ pub fn build_review_context(cwd string, model string) !ReviewContext {
 pub fn run_review(model SmallModel, context ReviewContext, instructions string) !string {
 	return model.complete('${context.instructions}\nYou are a fresh review agent. You cannot edit files.',
 		instructions, 4096)!
+}
+
+pub fn review_prompt(context ReviewContext, instructions string) string {
+	mut prompt := context.instructions
+	if prompt != '' { prompt += '\n\n' }
+	prompt += 'You are a fresh code review agent operating in ${context.cwd}. Inspect the files yourself using the available read-only Read, Shell, and WebSearch tools. Do not ask the user to provide files that can be found in the working directory. Continue using tools until you have enough evidence, then give the actual review findings. Prioritize concrete correctness bugs, behavioral differences, edge cases, and performance issues; cite file names and lines when possible. You cannot edit files.'
+	prompt += '\n\nReview request:\n${instructions}'
+	return prompt
 }
 
 fn load_review_instructions(cwd string) !string {

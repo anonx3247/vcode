@@ -52,6 +52,18 @@ fn test_review_has_no_edit_tool() {
 	assert 'Edit' !in context.tools
 }
 
+fn test_review_prompt_requires_independent_tool_use_and_final_findings() {
+	context := ReviewContext{
+		cwd: '/tmp/project'
+	}
+	prompt := review_prompt(context, 'compare a.c and a.go')
+	assert prompt.contains('/tmp/project')
+	assert prompt.contains('Inspect the files yourself')
+	assert prompt.contains('Do not ask the user to provide files')
+	assert prompt.contains('give the actual review findings')
+	assert prompt.contains('compare a.c and a.go')
+}
+
 fn test_session_prompt_replays_prior_messages_and_tool_history_once() {
 	old_state := os.getenv('XDG_STATE_HOME')
 	tmp := os.join_path(os.temp_dir(), 'vc-context-history-${os.getpid()}')
@@ -68,7 +80,8 @@ fn test_session_prompt_replays_prior_messages_and_tool_history_once() {
 		panic(err)
 	}
 	journal.append(4, 'assistant', 'I will remember it.') or { panic(err) }
-	journal.append(5, 'user', 'what number did I give you?') or { panic(err) }
+	journal.append(5, 'review', 'Finding: the bounds check is missing.') or { panic(err) }
+	journal.append(6, 'user', 'what number did I give you?') or { panic(err) }
 	prompt := build_session_prompt(id, 'local instructions', '', 'what number did I give you?', Config{}) or {
 		panic(err)
 	}
@@ -76,5 +89,6 @@ fn test_session_prompt_replays_prior_messages_and_tool_history_once() {
 	assert prompt.contains('[Tool call]')
 	assert prompt.contains('important contents')
 	assert prompt.contains('[Assistant]\nI will remember it.')
+	assert prompt.contains('[Review findings]\nFinding: the bounds check is missing.')
 	assert prompt.count('what number did I give you?') == 1
 }

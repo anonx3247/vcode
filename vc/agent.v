@@ -59,6 +59,14 @@ pub:
 }
 
 pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !AgentTurnResult {
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, true)
+}
+
+pub fn run_review_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !AgentTurnResult {
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, false)
+}
+
+fn run_agent_turn_with_policy(model_ref string, prompt string, cwd string, cfg Config, allow_edit bool) !AgentTurnResult {
 	model := parse_model_ref(model_ref)!
 	provider := cfg.providers[model.provider] or {
 		ProviderConfig{
@@ -90,13 +98,18 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 	if key == '' { return error('missing API key for ${model.provider}') }
 	base_url := provider_base_url(kind, provider)!
 	mut input_items := ['{"role":"user","content":"${json_escape(prompt)}"}']
-	mut body := agent_request_body(model.model, input_items)
+	mut body := agent_request_body_with_tools(model.model, input_items,
+		tool_definitions(allow_edit))
 	mut tool_calls := 0
 	mut display := ToolDisplayState{}
 	mut history := []AgentHistoryEvent{}
 	for _ in 0 .. 32 {
 		display.markdown.begin()
-		response := stream_agent_response(base_url, key, body, mut display)!
+		response := stream_agent_response(base_url, key, body, mut display, if allow_edit {
+			300
+		} else {
+			900
+		})!
 		mut outputs := []string{}
 		for call in response.calls {
 			if call.call_id == '' { return error('tool call did not include a call_id') }
@@ -108,7 +121,7 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 				kind: 'tool_call'
 				data: '{"name":"${json_escape(call.name)}","arguments":${json2.encode(call.arguments)}}'
 			}
-			result := execute_agent_tool(call.name, call.arguments, cwd) or {
+			result := execute_agent_tool_with_policy(call.name, call.arguments, cwd, allow_edit) or {
 				'{"error":"${json_escape(err.msg())}"}'
 			}
 			history << AgentHistoryEvent{
@@ -139,13 +152,17 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 		}
 		input_items << response.raw_output
 		input_items << outputs
-		body = agent_request_body(model.model, input_items)
+		body = agent_request_body_with_tools(model.model, input_items, tool_definitions(allow_edit))
 	}
 	return error('tool loop exceeded 32 steps')
 }
 
 fn agent_request_body(model string, input_items []string) string {
-	return '{"model":"${json_escape(model)}","input":[${input_items.join(',')}],"tools":${agent_tool_definitions()},"store":false,"include":["reasoning.encrypted_content"],"stream":true}'
+	return agent_request_body_with_tools(model, input_items, agent_tool_definitions())
+}
+
+fn agent_request_body_with_tools(model string, input_items []string, tools string) string {
+	return '{"model":"${json_escape(model)}","input":[${input_items.join(',')}],"tools":${tools},"store":false,"include":["reasoning.encrypted_content"],"stream":true}'
 }
 
 struct AgentStreamResponse {
@@ -155,7 +172,7 @@ mut:
 	calls      []ResponsesOutputItem
 }
 
-fn stream_agent_response(base_url string, key string, body string, mut display ToolDisplayState) !AgentStreamResponse {
+fn stream_agent_response(base_url string, key string, body string, mut display ToolDisplayState, timeout_seconds int) !AgentStreamResponse {
 	curl := os.find_abs_path_of_executable('curl') or { return error('curl is required') }
 	tmp := os.join_path(os.temp_dir(), 'vc-agent-${os.getpid()}-${time.now().unix_nano()}')
 	os.mkdir_all(tmp)!
@@ -169,8 +186,8 @@ fn stream_agent_response(base_url string, key string, body string, mut display T
 	os.chmod(body_path, 0o600)!
 	mut process := os.new_process(curl)
 	process.set_args(['--silent', '--show-error', '--no-buffer', '--fail-with-body', '--max-time',
-		'300', '--request', 'POST', '--header', '@${headers_path}', '--data-binary', '@${body_path}',
-		'${base_url}/responses'])
+		'${timeout_seconds}', '--request', 'POST', '--header', '@${headers_path}', '--data-binary',
+		'@${body_path}', '${base_url}/responses'])
 	process.set_redirect_stdio()
 	process.run()
 	display.spinner.begin()
@@ -193,8 +210,7 @@ fn stream_agent_response(base_url string, key string, body string, mut display T
 	code := process.code
 	process.close()
 	if code != 0 {
-		message :=
-			sanitize_terminal(if raw_error.trim_space() != '' { raw_error } else { errors }).replace('\n', ' ').trim_space()
+		message := provider_failure_detail(raw_error, errors)
 		return error('provider request failed (curl ${code})${if message == '' {
 			''
 		} else {
@@ -203,6 +219,14 @@ fn stream_agent_response(base_url string, key string, body string, mut display T
 	}
 	parser.finish()!
 	return result
+}
+
+fn provider_failure_detail(raw_output string, stderr string) string {
+	clean_error := sanitize_terminal(stderr).replace('\n', ' ').trim_space()
+	if clean_error != '' { return clean_error }
+	trimmed := raw_output.trim_space()
+	if trimmed.starts_with('data:') || trimmed.contains('\ndata:') { return '' }
+	return sanitize_terminal(trimmed).replace('\n', ' ').trim_space()
 }
 
 fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStreamResponse, mut display ToolDisplayState, raw_error string) !string {
@@ -274,6 +298,11 @@ fn json_array_field(source string, name string) !string {
 }
 
 fn execute_agent_tool(name string, arguments string, cwd string) !string {
+	return execute_agent_tool_with_policy(name, arguments, cwd, true)
+}
+
+fn execute_agent_tool_with_policy(name string, arguments string, cwd string, allow_edit bool) !string {
+	if name == 'Edit' && !allow_edit { return error('Edit is unavailable during review') }
 	return match name {
 		'Read' {
 			args := json2.decode[ReadArguments](arguments)!
@@ -314,5 +343,18 @@ fn resolve_tool_path(cwd string, path string) string {
 }
 
 fn agent_tool_definitions() string {
-	return '[{"type":"function","name":"Read","description":"Read a 1-based inclusive line range from a file and return its content and whole-file freshness fingerprint. Defaults to the first 3000 lines.","parameters":{"type":"object","properties":{"path":{"type":"string"},"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false}},{"type":"function","name":"Edit","description":"Replace one exact occurrence in an existing file using a fresh Read fingerprint. To create a new file without Read, use empty old text and omit fingerprint (or use fingerprint 0).","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"replacement":{"type":"string"},"fingerprint":{"type":"string"}},"required":["path","old","replacement"],"additionalProperties":false}},{"type":"function","name":"Shell","description":"Run a command in an isolated login shell in the session working directory.","parameters":{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}},{"type":"function","name":"WebSearch","description":"Search the web with Brave Search.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]'
+	return tool_definitions(true)
+}
+
+fn review_tool_definitions() string {
+	return tool_definitions(false)
+}
+
+fn tool_definitions(allow_edit bool) string {
+	read := '{"type":"function","name":"Read","description":"Read a 1-based inclusive line range from a file and return its content and whole-file freshness fingerprint. Defaults to the first 3000 lines.","parameters":{"type":"object","properties":{"path":{"type":"string"},"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false}}'
+	edit := '{"type":"function","name":"Edit","description":"Replace one exact occurrence in an existing file using a fresh Read fingerprint. To create a new file without Read, use empty old text and omit fingerprint (or use fingerprint 0).","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"replacement":{"type":"string"},"fingerprint":{"type":"string"}},"required":["path","old","replacement"],"additionalProperties":false}}'
+	shell := '{"type":"function","name":"Shell","description":"Run a command in an isolated login shell in the session working directory.","parameters":{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}}'
+	search := '{"type":"function","name":"WebSearch","description":"Search the web with Brave Search.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}'
+	definitions := if allow_edit { [read, edit, shell, search] } else { [read, shell, search] }
+	return '[${definitions.join(',')}]'
 }
