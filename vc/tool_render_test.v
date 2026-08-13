@@ -33,3 +33,15 @@ fn test_read_tool_card_does_not_show_raw_json() {
 	assert plain.contains('README.md')
 	assert !plain.contains('{"path"')
 }
+
+fn test_tool_result_collapse_rewinds_and_clears_rendered_rows() {
+	sequence := tool_result_collapse_sequence('first\nsecond\nthird', 80)
+	assert sequence == '\x1b[3A\r\x1b[J'
+}
+
+fn test_read_result_does_not_render_file_content() {
+	result := '{"path":"/tmp/file","content":"secret contents","fingerprint":"abcdef1234567890","truncated":false}'
+	plain := sanitize_terminal(render_tool_result('Read', result))
+	assert plain.contains('/tmp/file')
+	assert !plain.contains('secret contents')
+}

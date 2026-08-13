@@ -1,6 +1,7 @@
 module vc
 
 import json2
+import os
 
 const ansi_reset = '\x1b[0m'
 const ansi_dim = '\x1b[2m'
@@ -18,6 +19,11 @@ struct BraveSearchResult {
 	title       string
 	url         string
 	description string
+}
+
+struct ToolDisplayState {
+mut:
+	expanded_result string
 }
 
 fn render_tool_call(name string, arguments string) string {
@@ -170,8 +176,7 @@ fn render_tool_result(name string, result string) string {
 			} else {
 				value.fingerprint
 			}
-			'${tool_style(name)}◀ Read · ${value.path} · ${fingerprint}${ansi_reset}\n${render_preview(value.content,
-				2048, 24)}'
+			'${tool_style(name)}◀ Read · ${value.path} · ${fingerprint}${ansi_reset}'
 		}
 		'Edit' {
 			fingerprint := json_field(result, 'fingerprint')
@@ -184,6 +189,28 @@ fn render_tool_result(name string, result string) string {
 			'${tool_style(name)}◀ ${name} · complete${ansi_reset}'
 		}
 	}
+}
+
+fn collapse_visible_tool_result(rendered string) {
+	if rendered == '' { return }
+	print(tool_result_collapse_sequence(rendered, terminal_columns()))
+	flush_stdout()
+}
+
+fn tool_result_collapse_sequence(rendered string, columns int) string {
+	width := if columns >= 20 { columns } else { 80 }
+	mut rows := 0
+	for line in sanitize_terminal(rendered).split_into_lines() {
+		characters := line.runes().len
+		rows += if characters == 0 { 1 } else { (characters + width - 1) / width }
+	}
+	if rows == 0 { return '' }
+	return '\x1b[${rows}A\r\x1b[J'
+}
+
+fn terminal_columns() int {
+	configured := os.getenv('COLUMNS').int()
+	return if configured >= 20 { configured } else { 80 }
 }
 
 fn render_web_search_result(result string) string {

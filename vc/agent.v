@@ -80,17 +80,23 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 	mut input_items := ['{"role":"user","content":"${json_escape(prompt)}"}']
 	mut body := agent_request_body(model.model, input_items)
 	mut tool_calls := 0
+	mut display := ToolDisplayState{}
 	for _ in 0 .. 32 {
-		response := stream_agent_response(base_url, key, body)!
+		response := stream_agent_response(base_url, key, body, mut display)!
 		if response.answer != '' { println('') }
 		mut outputs := []string{}
 		for call in response.calls {
 			if call.call_id == '' { return error('tool call did not include a call_id') }
+			collapse_visible_tool_result(display.expanded_result)
+			display.expanded_result = ''
 			println(render_tool_call(call.name, call.arguments))
 			result := execute_agent_tool(call.name, call.arguments, cwd) or {
 				'{"error":"${json_escape(err.msg())}"}'
 			}
-			println(render_tool_result(call.name, result))
+			if call.name != 'Read' {
+				display.expanded_result = render_tool_result(call.name, result)
+				println(display.expanded_result)
+			}
 			outputs << '{"type":"function_call_output","call_id":"${json_escape(call.call_id)}","output":"${json_escape(result)}"}'
 			tool_calls++
 		}
@@ -122,7 +128,7 @@ mut:
 	calls      []ResponsesOutputItem
 }
 
-fn stream_agent_response(base_url string, key string, body string) !AgentStreamResponse {
+fn stream_agent_response(base_url string, key string, body string, mut display ToolDisplayState) !AgentStreamResponse {
 	curl := os.find_abs_path_of_executable('curl') or { return error('curl is required') }
 	tmp := os.join_path(os.temp_dir(), 'vc-agent-${os.getpid()}-${time.now().unix_nano()}')
 	os.mkdir_all(tmp)!
@@ -145,12 +151,14 @@ fn stream_agent_response(base_url string, key string, body string) !AgentStreamR
 	mut raw_error := ''
 	mut errors := ''
 	for process.is_alive() {
-		raw_error = consume_agent_stream(process.stdout_read(), mut parser, mut result, raw_error)!
+		raw_error = consume_agent_stream(process.stdout_read(), mut parser, mut result, mut
+			display, raw_error)!
 		errors = bounded_text(errors + process.stderr_read(), 16 * 1024)
 		time.sleep(5 * time.millisecond)
 	}
 	process.wait()
-	raw_error = consume_agent_stream(process.stdout_slurp(), mut parser, mut result, raw_error)!
+	raw_error = consume_agent_stream(process.stdout_slurp(), mut parser, mut result, mut display,
+		raw_error)!
 	errors = bounded_text(errors + process.stderr_slurp(), 16 * 1024)
 	code := process.code
 	process.close()
@@ -167,12 +175,16 @@ fn stream_agent_response(base_url string, key string, body string) !AgentStreamR
 	return result
 }
 
-fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStreamResponse, raw_error string) !string {
+fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStreamResponse, mut display ToolDisplayState, raw_error string) !string {
 	if chunk == '' { return raw_error }
 	updated_error := bounded_text(raw_error + chunk, 16 * 1024)
 	for message in parser.feed(chunk)! {
 		type_name := json_field(message.data, 'type')
-		if type_name == 'response.output_text.delta' {
+		if type_name == 'response.output_item.added'
+			&& message.data.contains('"type":"function_call"') {
+			collapse_visible_tool_result(display.expanded_result)
+			display.expanded_result = ''
+		} else if type_name == 'response.output_text.delta' {
 			delta := json_field(message.data, 'delta')
 			result.answer += delta
 			print(delta)
