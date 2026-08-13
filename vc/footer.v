@@ -44,6 +44,16 @@ pub fn footer(model string, cwd string, pr int) string {
 	return parts.join(' • ')
 }
 
+pub fn compact_prompt(model string, cwd string, context_percent int) string {
+	location := detect_repo(cwd)
+	place := if location.inside {
+		if location.folder == '.' { location.name } else { '${location.name}/${location.folder}' }
+	} else {
+		location.folder
+	}
+	return '\x1b[1;34m${model}${ansi_reset} ${place} ${context_percent}% \x1b[1;34m❯${ansi_reset} '
+}
+
 fn shorten_home(path string) string {
 	home := os.real_path(os.home_dir())
 	return if path == home {

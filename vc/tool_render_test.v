@@ -33,6 +33,7 @@ fn test_shell_result_preview_is_truncated_only_for_display() {
 	assert plain.contains('lines hidden')
 	assert plain.len < output.len
 	assert result.contains('line 99')
+	assert rendered.starts_with('\x1b[2m│ ')
 }
 
 fn test_read_tool_card_does_not_show_raw_json() {

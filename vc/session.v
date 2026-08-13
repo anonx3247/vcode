@@ -6,14 +6,45 @@ import time
 
 pub struct SessionMeta {
 pub mut:
-	id         string
-	model      string
-	effort     string
-	cwd        string
-	recap      string
-	recap_ms   i64
-	created_ms i64
-	updated_ms i64
+	id              string
+	name            string
+	model           string
+	effort          string
+	cwd             string
+	recap           string
+	recap_ms        i64
+	context_percent int
+	tools           []string
+	created_ms      i64
+	updated_ms      i64
+}
+
+pub fn resolve_session_meta(reference string) !SessionMeta {
+	if reference == '' { return error('session id or name is required') }
+	if os.exists(os.join_path(session_dir(reference), 'session.json')) {
+		return load_session_meta(reference)
+	}
+	for session in list_sessions()! {
+		if session.name == reference { return session }
+	}
+	return error('unknown session: ${reference}')
+}
+
+pub fn validate_session_name(name string, except_id string) !string {
+	clean := name.trim_space()
+	if clean == '' { return error('session name cannot be empty') }
+	if clean.len > 64 { return error('session name cannot exceed 64 bytes') }
+	for character in clean.bytes() {
+		if !(character.is_alnum() || character in [`-`, `_`, `.`]) {
+			return error('session name may contain only letters, numbers, ., _, and -')
+		}
+	}
+	for session in list_sessions()! {
+		if session.id != except_id && (session.name == clean || session.id == clean) {
+			return error('session name is already in use: ${clean}')
+		}
+	}
+	return clean
 }
 
 pub fn state_dir() string {

@@ -59,6 +59,9 @@ fn test_footer_at_repo_root() {
 	assert location.inside
 	assert location.folder == '.'
 	assert footer('openai:test', os.getwd(), 3).contains('PR #3')
+	prompt := sanitize_terminal(compact_prompt('openai:test', os.getwd(), 0))
+	assert prompt == 'openai:test vcode 0% ❯ '
+	assert sanitize_terminal(compact_prompt('openai:test', os.getwd(), 42)).contains('42% ❯')
 }
 
 fn test_tui_queue_and_double_escape() {

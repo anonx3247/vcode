@@ -34,22 +34,35 @@ pub:
 	checkpoint ?SummaryCheckpoint
 }
 
+pub struct SessionContext {
+pub:
+	prompt         string
+	percent        int
+	new_compaction ?SummaryCheckpoint
+}
+
 pub fn project_context(transcript []ContextItem, context_limit int, small_model string, summarizer SmallModel) !ContextProjection {
 	if transcript.len == 0 { return ContextProjection{} }
 	mut items := transcript.clone()
+	original_input := transcript.map('${it.kind}: ${it.content}').join('\n')
+	mut actions := []string{}
 	mut used := count_tokens(items)
 	if used * 100 >= context_limit * 65 {
+		before := items.len
 		cutoff := items.len * 2 / 3
 		mut without_old_reasoning := []ContextItem{cap: items.len}
 		for index, item in items {
 			if index >= cutoff || item.kind != 'reasoning' { without_old_reasoning << item }
 		}
 		items = without_old_reasoning.clone()
+		if items.len < before { actions << 'removed old reasoning' }
 		used = count_tokens(items)
 	}
 	if used * 100 >= context_limit * 75 {
+		before_tokens := used
 		items = abridge_tools(items)
 		used = count_tokens(items)
+		if used < before_tokens { actions << 'abridged older tool activity' }
 	}
 	if used * 100 >= context_limit * 85 && items.len > 2 {
 		cutoff := items.len * 2 / 3
@@ -80,6 +93,19 @@ pub fn project_context(transcript []ContextItem, context_limit int, small_model 
 			checkpoint: checkpoint
 		}
 	}
+	if actions.len > 0 {
+		return ContextProjection{
+			items:      items
+			checkpoint: SummaryCheckpoint{
+				start_seq:      transcript[0].seq
+				end_seq:        transcript#[-1..][0].seq
+				input_hash:     sha256.hexhash(original_input)
+				policy_version: 'v1'
+				result:         actions.join(', ')
+				created_ms:     time.now().unix_milli()
+			}
+		}
+	}
 	return ContextProjection{
 		items: items
 	}
@@ -90,6 +116,10 @@ pub fn journal_checkpoint(journal Journal, checkpoint SummaryCheckpoint, seq u64
 }
 
 pub fn build_session_prompt(session_id string, instructions string, skill string, current_message string, cfg Config) !string {
+	return build_session_context(session_id, instructions, skill, current_message, cfg)!.prompt
+}
+
+pub fn build_session_context(session_id string, instructions string, skill string, current_message string, cfg Config) !SessionContext {
 	journal := open_journal(os.join_path(session_dir(session_id), 'transcript.jsonl'))!
 	records := journal.read_recent(4 * 1024 * 1024)!
 	mut items := []ContextItem{}
@@ -122,6 +152,7 @@ pub fn build_session_prompt(session_id string, instructions string, skill string
 		}
 	}
 	mut prompt := instructions
+	prompt += '\n\nYou can delegate a focused task to another vcode agent with `vc -p "<prompt>"`. It prints one lowercase tool name per call followed by the final answer. Restrict it when useful with repeated `--tool read|edit|shell|web` options.'
 	if skill != '' { prompt += '\n\nThe user explicitly activated this skill:\n' + skill }
 	if projection.items.len > 0 {
 		prompt += '\n\nPrevious session history:\n'
@@ -130,7 +161,22 @@ pub fn build_session_prompt(session_id string, instructions string, skill string
 		}
 	}
 	prompt += '\n\nCurrent user request:\n' + current_message
-	return prompt
+	mut new_compaction := ?SummaryCheckpoint(none)
+	if checkpoint := projection.checkpoint {
+		mut already_recorded := false
+		for record in records {
+			if record.kind != 'summary_checkpoint' { continue
+			 }
+			old := json2.decode[SummaryCheckpoint](record.data) or { continue }
+			if old.input_hash == checkpoint.input_hash { already_recorded = true }
+		}
+		if !already_recorded { new_compaction = checkpoint }
+	}
+	return SessionContext{
+		prompt:         prompt
+		percent:        min_int(100, estimate_tokens(prompt) * 100 / 128_000)
+		new_compaction: new_compaction
+	}
 }
 
 fn bounded_context_tail(items []ContextItem, token_limit int) []ContextItem {

@@ -28,6 +28,24 @@ mut:
 	expanded_result string
 	markdown        MarkdownStreamState
 	spinner         ThinkingSpinner
+	sink            OutputSink
+}
+
+struct OutputSink {
+	events      chan string
+	interactive bool
+	discard     bool
+}
+
+fn (sink OutputSink) write(value string) {
+	if sink.discard {
+		return
+	} else if sink.interactive {
+		sink.events <- value
+	} else {
+		print(value)
+		flush_stdout()
+	}
 }
 
 struct ThinkingSpinner {
@@ -38,27 +56,25 @@ mut:
 	last_ms i64
 }
 
-fn (mut spinner ThinkingSpinner) begin() {
+fn (mut spinner ThinkingSpinner) begin(sink OutputSink) {
 	spinner.active = os.is_atty(1) > 0
 	spinner.visible = false
 	spinner.frame = 0
 	spinner.last_ms = 0
-	spinner.tick(time.now().unix_milli())
+	spinner.tick(time.now().unix_milli(), sink)
 }
 
-fn (mut spinner ThinkingSpinner) tick(now_ms i64) {
+fn (mut spinner ThinkingSpinner) tick(now_ms i64, sink OutputSink) {
 	if !spinner.active || (spinner.last_ms > 0 && now_ms - spinner.last_ms < 80) { return }
-	print('\r\x1b[2K\x1b[34m${thinking_frames[spinner.frame % thinking_frames.len]}${ansi_reset} Thinking…')
-	flush_stdout()
+	sink.write('\r\x1b[2K\x1b[34m${thinking_frames[spinner.frame % thinking_frames.len]}${ansi_reset} Thinking…')
 	spinner.visible = true
 	spinner.frame++
 	spinner.last_ms = now_ms
 }
 
-fn (mut spinner ThinkingSpinner) stop() {
+fn (mut spinner ThinkingSpinner) stop(sink OutputSink) {
 	if spinner.visible {
-		print('\r\x1b[2K')
-		flush_stdout()
+		sink.write('\r\x1b[2K')
 	}
 	spinner.active = false
 	spinner.visible = false
@@ -233,16 +249,13 @@ fn tool_result_failed(name string, result string) bool {
 	return false
 }
 
-fn replace_visible_tool_call(rendered string, replacement string) {
-	print(tool_result_collapse_sequence(rendered, terminal_columns()))
-	println(replacement)
-	flush_stdout()
+fn replace_visible_tool_call(rendered string, replacement string, sink OutputSink) {
+	sink.write(tool_result_collapse_sequence(rendered, terminal_columns()) + replacement + '\n')
 }
 
-fn collapse_visible_tool_result(rendered string) {
+fn collapse_visible_tool_result(rendered string, sink OutputSink) {
 	if rendered == '' { return }
-	print(tool_result_collapse_sequence(rendered, terminal_columns()))
-	flush_stdout()
+	sink.write(tool_result_collapse_sequence(rendered, terminal_columns()))
 }
 
 fn tool_result_collapse_sequence(rendered string, columns int) string {
@@ -371,7 +384,7 @@ fn render_preview(value string, max_bytes int, max_lines int) string {
 		 }
 		remaining := max_bytes - used
 		piece := safe_text_prefix(line, remaining)
-		shown << '${ansi_dim}│${ansi_reset} ${piece}'
+		shown << '${ansi_dim}│ ${piece}${ansi_reset}'
 		used += piece.len + 1
 		if piece.len < line.len { break
 		 }

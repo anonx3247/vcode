@@ -22,6 +22,10 @@ fn test_rpc_message_and_move() {
 	assert recap_response.contains('Worked on history replay.')
 	assert worker.meta.recap == 'Worked on history replay.'
 	assert worker.meta.recap_ms > 0
+	rename_response :=
+		worker.handle_rpc('{"jsonrpc":"2.0","id":5,"method":"session.rename","params":{"name":"rpc-test"}}')
+	assert rename_response.contains('rpc-test')
+	assert worker.meta.name == 'rpc-test'
 	mut restarted := new_session_worker(worker.meta) or { panic(err) }
 	_ =
 		restarted.handle_rpc('{"jsonrpc":"2.0","id":4,"method":"session.message","params":{"message":"again"}}')

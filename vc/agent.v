@@ -1,5 +1,6 @@
 module vc
 
+import encoding.base64
 import json2
 import os
 import time
@@ -46,10 +47,11 @@ struct SearchArguments {
 
 pub struct AgentTurnResult {
 pub:
-	answer     string
-	tool_calls int
-	streamed   bool
-	history    []AgentHistoryEvent
+	answer       string
+	tool_calls   int
+	streamed     bool
+	history      []AgentHistoryEvent
+	input_tokens int
 }
 
 pub struct AgentHistoryEvent {
@@ -59,14 +61,48 @@ pub:
 }
 
 pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !AgentTurnResult {
-	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, true)
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, default_agent_tools, OutputSink{})
 }
 
 pub fn run_review_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !AgentTurnResult {
-	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, false)
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, ['read', 'shell', 'web'], OutputSink{})
 }
 
-fn run_agent_turn_with_policy(model_ref string, prompt string, cwd string, cfg Config, allow_edit bool) !AgentTurnResult {
+fn run_review_agent_turn_interactive(model_ref string, prompt string, cwd string, cfg Config, events chan string) !AgentTurnResult {
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, ['read', 'shell', 'web'], OutputSink{
+		events:      events
+		interactive: true
+	})
+}
+
+fn run_agent_turn_interactive(model_ref string, prompt string, cwd string, cfg Config, events chan string) !AgentTurnResult {
+	return run_agent_turn_interactive_restricted(model_ref, prompt, cwd, cfg, default_agent_tools,
+		events)
+}
+
+fn run_agent_turn_interactive_restricted(model_ref string, prompt string, cwd string, cfg Config, tools []string, events chan string) !AgentTurnResult {
+	allowed := if tools.len == 0 { default_agent_tools } else { tools }
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, allowed, OutputSink{
+		events:      events
+		interactive: true
+	})
+}
+
+pub fn run_agent_turn_restricted(model_ref string, prompt string, cwd string, cfg Config, tools []string) !AgentTurnResult {
+	allowed := if tools.len == 0 { default_agent_tools } else { tools }
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, allowed, OutputSink{})
+}
+
+pub fn run_agent_turn_scripted(model_ref string, prompt string, cwd string, cfg Config, tools []string) !AgentTurnResult {
+	allowed := if tools.len == 0 { default_agent_tools } else { tools }
+	return run_agent_turn_with_policy(model_ref, prompt, cwd, cfg, allowed, OutputSink{
+		discard: true
+	})
+}
+
+const default_agent_tools = ['read', 'edit', 'shell', 'web']
+
+fn run_agent_turn_with_policy(model_ref string, prompt string, cwd string, cfg Config, allowed_tools []string, sink OutputSink) !AgentTurnResult {
 	model := parse_model_ref(model_ref)!
 	provider := cfg.providers[model.provider] or {
 		ProviderConfig{
@@ -82,13 +118,11 @@ fn run_agent_turn_with_policy(model_ref string, prompt string, cwd string, cfg C
 		for event in events {
 			if event.kind == .text {
 				answer += event.text
-				print(markdown.push(event.text, terminal_columns()))
-				flush_stdout()
+				sink.write(markdown.push(event.text, terminal_columns()))
 			}
 			if event.kind == .error { return error(event.text) }
 		}
-		print(markdown.finish(terminal_columns()))
-		flush_stdout()
+		sink.write(markdown.finish(terminal_columns()))
 		return AgentTurnResult{
 			answer:   answer
 			streamed: true
@@ -97,31 +131,39 @@ fn run_agent_turn_with_policy(model_ref string, prompt string, cwd string, cfg C
 	key := provider_api_key(kind, provider)
 	if key == '' { return error('missing API key for ${model.provider}') }
 	base_url := provider_base_url(kind, provider)!
-	mut input_items := ['{"role":"user","content":"${json_escape(prompt)}"}']
+	mut input_items := [user_input_item(prompt)!]
 	mut body := agent_request_body_with_tools(model.model, input_items,
-		tool_definitions(allow_edit))
+		tool_definitions(allowed_tools))
 	mut tool_calls := 0
-	mut display := ToolDisplayState{}
+	mut input_tokens := 0
+	mut display := ToolDisplayState{
+		sink: sink
+	}
 	mut history := []AgentHistoryEvent{}
 	for _ in 0 .. 32 {
 		display.markdown.begin()
-		response := stream_agent_response(base_url, key, body, mut display, if allow_edit {
-			300
-		} else {
+		response := stream_agent_response(base_url, key, body, mut display, if allowed_tools == [
+			'read',
+			'shell',
+			'web',
+		] {
 			900
+		} else {
+			300
 		})!
+		if response.input_tokens > 0 { input_tokens = response.input_tokens }
 		mut outputs := []string{}
 		for call in response.calls {
 			if call.call_id == '' { return error('tool call did not include a call_id') }
-			collapse_visible_tool_result(display.expanded_result)
+			collapse_visible_tool_result(display.expanded_result, display.sink)
 			display.expanded_result = ''
 			call_line := render_tool_call(call.name, call.arguments)
-			println(call_line)
+			display.sink.write(call_line + '\n')
 			history << AgentHistoryEvent{
 				kind: 'tool_call'
 				data: '{"name":"${json_escape(call.name)}","arguments":${json2.encode(call.arguments)}}'
 			}
-			result := execute_agent_tool_with_policy(call.name, call.arguments, cwd, allow_edit) or {
+			result := execute_agent_tool_with_policy(call.name, call.arguments, cwd, allowed_tools) or {
 				'{"error":"${json_escape(err.msg())}"}'
 			}
 			history << AgentHistoryEvent{
@@ -130,21 +172,24 @@ fn run_agent_turn_with_policy(model_ref string, prompt string, cwd string, cfg C
 			}
 			if tool_result_failed(call.name, result) {
 				replace_visible_tool_call(call_line, render_failed_tool_call(call.name,
-					call.arguments))
+					call.arguments), display.sink)
 			}
 			if call.name != 'Read' {
 				display.expanded_result = render_tool_result(call.name, result, call.arguments)
-				if display.expanded_result != '' { println(display.expanded_result) }
+				if display.expanded_result != '' {
+					display.sink.write(display.expanded_result + '\n')
+				}
 			}
 			outputs << '{"type":"function_call_output","call_id":"${json_escape(call.call_id)}","output":"${json_escape(result)}"}'
 			tool_calls++
 		}
 		if outputs.len == 0 {
 			return AgentTurnResult{
-				answer:     response.answer
-				tool_calls: tool_calls
-				streamed:   true
-				history:    history
+				answer:       response.answer
+				tool_calls:   tool_calls
+				streamed:     true
+				history:      history
+				input_tokens: input_tokens
 			}
 		}
 		if response.raw_output.trim_space() == '' {
@@ -152,9 +197,107 @@ fn run_agent_turn_with_policy(model_ref string, prompt string, cwd string, cfg C
 		}
 		input_items << response.raw_output
 		input_items << outputs
-		body = agent_request_body_with_tools(model.model, input_items, tool_definitions(allow_edit))
+		body = agent_request_body_with_tools(model.model, input_items,
+			tool_definitions(allowed_tools))
 	}
 	return error('tool loop exceeded 32 steps')
+}
+
+fn user_input_item(prompt string) !string {
+	paths := prompt_image_paths(prompt)
+	if paths.len == 0 { return '{"role":"user","content":"${json_escape(prompt)}"}' }
+	mut content := ['{"type":"input_text","text":"${json_escape(prompt)}"}']
+	for path in paths {
+		bytes := os.read_bytes(path)!
+		if bytes.len > 20 * 1024 * 1024 { return error('image exceeds 20 MiB: ${path}') }
+		mime := image_mime(path)
+		content << '{"type":"input_image","image_url":"data:${mime};base64,${base64.encode(bytes)}"}'
+		cleanup_clipboard_image(path)
+	}
+	return '{"role":"user","content":[${content.join(',')}]}'
+}
+
+fn anthropic_user_content(prompt string) !string {
+	mut content := []string{}
+	for path in prompt_image_paths(prompt) {
+		bytes := os.read_bytes(path)!
+		if bytes.len > 20 * 1024 * 1024 { return error('image exceeds 20 MiB: ${path}') }
+		content << '{"type":"image","source":{"type":"base64","media_type":"${image_mime(path)}","data":"${base64.encode(bytes)}"}}'
+		cleanup_clipboard_image(path)
+	}
+	content << '{"type":"text","text":"${json_escape(prompt)}"}'
+	return '[${content.join(',')}]'
+}
+
+fn cleanup_clipboard_image(path string) {
+	if os.base(path).starts_with('vc-clipboard-') && os.dir(path) == os.temp_dir() {
+		os.rm(path) or {}
+	}
+}
+
+fn prompt_image_paths(prompt string) []string {
+	request := if prompt.contains('Current user request:\n') {
+		prompt.all_after_last('Current user request:\n')
+	} else {
+		prompt
+	}
+	mut paths := []string{}
+	for raw in prompt_path_tokens(request) {
+		candidate := raw.trim('"\'`()[]{}<>,;:')
+		if candidate == '' { continue
+		 }
+		extension := candidate.all_after_last('.').to_lower()
+		if extension !in ['png', 'jpg', 'jpeg', 'gif', 'webp'] { continue
+		 }
+		path := os.real_path(candidate)
+		if os.is_file(path) && path !in paths {
+			paths << path
+			if paths.len == 4 { break
+			 }
+		}
+	}
+	return paths
+}
+
+fn prompt_path_tokens(value string) []string {
+	mut tokens := []string{}
+	mut current := ''
+	mut quote := u8(0)
+	mut escaped := false
+	for character in value.bytes() {
+		if escaped {
+			current += character.ascii_str()
+			escaped = false
+		} else if character == `\\` {
+			escaped = true
+		} else if quote != 0 {
+			if character == quote {
+				quote = 0
+			} else {
+				current += character.ascii_str()
+			}
+		} else if character in [`'`, `"`] {
+			quote = character
+		} else if character in [` `, `\t`, `\r`, `\n`] {
+			if current != '' {
+				tokens << current
+				current = ''
+			}
+		} else {
+			current += character.ascii_str()
+		}
+	}
+	if current != '' { tokens << current }
+	return tokens
+}
+
+fn image_mime(path string) string {
+	return match path.all_after_last('.').to_lower() {
+		'jpg', 'jpeg' { 'image/jpeg' }
+		'gif' { 'image/gif' }
+		'webp' { 'image/webp' }
+		else { 'image/png' }
+	}
 }
 
 fn agent_request_body(model string, input_items []string) string {
@@ -167,9 +310,10 @@ fn agent_request_body_with_tools(model string, input_items []string, tools strin
 
 struct AgentStreamResponse {
 mut:
-	answer     string
-	raw_output string
-	calls      []ResponsesOutputItem
+	answer       string
+	raw_output   string
+	calls        []ResponsesOutputItem
+	input_tokens int
 }
 
 fn stream_agent_response(base_url string, key string, body string, mut display ToolDisplayState, timeout_seconds int) !AgentStreamResponse {
@@ -190,14 +334,14 @@ fn stream_agent_response(base_url string, key string, body string, mut display T
 		'@${body_path}', '${base_url}/responses'])
 	process.set_redirect_stdio()
 	process.run()
-	display.spinner.begin()
-	defer { display.spinner.stop() }
+	display.spinner.begin(display.sink)
+	defer { display.spinner.stop(display.sink) }
 	mut parser := new_sse_parser(1024 * 1024)
 	mut result := AgentStreamResponse{}
 	mut raw_error := ''
 	mut errors := ''
 	for process.is_alive() {
-		display.spinner.tick(time.now().unix_milli())
+		display.spinner.tick(time.now().unix_milli(), display.sink)
 		raw_error = consume_agent_stream(process.stdout_read(), mut parser, mut result, mut
 			display, raw_error)!
 		errors = bounded_text(errors + process.stderr_read(), 16 * 1024)
@@ -236,26 +380,25 @@ fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStre
 		type_name := json_field(message.data, 'type')
 		if type_name == 'response.output_item.added'
 			&& message.data.contains('"type":"function_call"') {
-			display.spinner.stop()
-			collapse_visible_tool_result(display.expanded_result)
+			display.spinner.stop(display.sink)
+			collapse_visible_tool_result(display.expanded_result, display.sink)
 			display.expanded_result = ''
 		} else if type_name == 'response.output_text.delta' {
-			display.spinner.stop()
+			display.spinner.stop(display.sink)
 			delta := json_field(message.data, 'delta')
 			result.answer += delta
-			print(display.markdown.push(delta, terminal_columns()))
-			flush_stdout()
+			display.sink.write(display.markdown.push(delta, terminal_columns()))
 		} else if type_name == 'response.completed' {
-			display.spinner.stop()
-			print(display.markdown.finish(terminal_columns()))
-			flush_stdout()
+			display.spinner.stop(display.sink)
+			display.sink.write(display.markdown.finish(terminal_columns()))
 			result.raw_output = json_array_field(message.data, 'output')!
+			result.input_tokens = json_field(message.data, 'input_tokens').int()
 			decoded := json2.decode[ResponsesApiResponse]('{"output":[${result.raw_output}]}')!
 			for item in decoded.output {
 				if item.type == 'function_call' { result.calls << item }
 			}
 		} else if type_name == 'error' {
-			display.spinner.stop()
+			display.spinner.stop(display.sink)
 			return error(json_field(message.data, 'message'))
 		}
 	}
@@ -298,11 +441,13 @@ fn json_array_field(source string, name string) !string {
 }
 
 fn execute_agent_tool(name string, arguments string, cwd string) !string {
-	return execute_agent_tool_with_policy(name, arguments, cwd, true)
+	return execute_agent_tool_with_policy(name, arguments, cwd, default_agent_tools)
 }
 
-fn execute_agent_tool_with_policy(name string, arguments string, cwd string, allow_edit bool) !string {
-	if name == 'Edit' && !allow_edit { return error('Edit is unavailable during review') }
+fn execute_agent_tool_with_policy(name string, arguments string, cwd string, allowed_tools []string) !string {
+	tool := name.to_lower()
+	alias := if tool == 'websearch' { 'web' } else { tool }
+	if alias !in allowed_tools { return error('${name} is unavailable for this agent') }
 	return match name {
 		'Read' {
 			args := json2.decode[ReadArguments](arguments)!
@@ -343,18 +488,22 @@ fn resolve_tool_path(cwd string, path string) string {
 }
 
 fn agent_tool_definitions() string {
-	return tool_definitions(true)
+	return tool_definitions(default_agent_tools)
 }
 
 fn review_tool_definitions() string {
-	return tool_definitions(false)
+	return tool_definitions(['read', 'shell', 'web'])
 }
 
-fn tool_definitions(allow_edit bool) string {
+fn tool_definitions(allowed_tools []string) string {
 	read := '{"type":"function","name":"Read","description":"Read a 1-based inclusive line range from a file and return its content and whole-file freshness fingerprint. Defaults to the first 3000 lines.","parameters":{"type":"object","properties":{"path":{"type":"string"},"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false}}'
 	edit := '{"type":"function","name":"Edit","description":"Replace one exact occurrence in an existing file using a fresh Read fingerprint. To create a new file without Read, use empty old text and omit fingerprint (or use fingerprint 0).","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"replacement":{"type":"string"},"fingerprint":{"type":"string"}},"required":["path","old","replacement"],"additionalProperties":false}}'
 	shell := '{"type":"function","name":"Shell","description":"Run a command in an isolated login shell in the session working directory.","parameters":{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}}'
 	search := '{"type":"function","name":"WebSearch","description":"Search the web with Brave Search.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}'
-	definitions := if allow_edit { [read, edit, shell, search] } else { [read, shell, search] }
+	mut definitions := []string{}
+	if 'read' in allowed_tools { definitions << read }
+	if 'edit' in allowed_tools { definitions << edit }
+	if 'shell' in allowed_tools { definitions << shell }
+	if 'web' in allowed_tools { definitions << search }
 	return '[${definitions.join(',')}]'
 }

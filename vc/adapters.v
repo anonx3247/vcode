@@ -133,11 +133,11 @@ fn curl_stream_completion(kind string, base_url string, key string, model string
 	mut endpoint := ''
 	if kind == 'openai' {
 		headers += 'Authorization: Bearer ${key}\n'
-		body = '{"model":"${json_escape(model)}","input":"${json_escape(prompt)}","stream":true}'
+		body = '{"model":"${json_escape(model)}","input":[${user_input_item(prompt)!}],"stream":true}'
 		endpoint = '${base_url}/responses'
 	} else {
 		headers += 'x-api-key: ${key}\nanthropic-version: 2023-06-01\n'
-		body = '{"model":"${json_escape(model)}","max_tokens":4096,"stream":true,"messages":[{"role":"user","content":"${json_escape(prompt)}"}]}'
+		body = '{"model":"${json_escape(model)}","max_tokens":4096,"stream":true,"messages":[{"role":"user","content":${anthropic_user_content(prompt)!}}]}'
 		endpoint = '${base_url}/messages'
 	}
 	os.write_file(headers_path, headers)!
@@ -230,7 +230,7 @@ pub:
 }
 
 pub fn (adapter OpenAIAdapter) build_request(model string, prompt string) !http.Request {
-	body := '{"model":"${json_escape(model)}","input":"${json_escape(prompt)}","stream":true}'
+	body := '{"model":"${json_escape(model)}","input":[${user_input_item(prompt)!}],"stream":true}'
 	mut request := http.new_request(.post, '${adapter.base_url}/responses', body)
 	request.add_header(.authorization, 'Bearer ${adapter.api_key}')
 	request.add_header(.content_type, 'application/json')
@@ -277,7 +277,7 @@ pub:
 }
 
 pub fn (adapter AnthropicAdapter) build_request(model string, prompt string) !http.Request {
-	body := '{"model":"${json_escape(model)}","max_tokens":4096,"stream":true,"messages":[{"role":"user","content":"${json_escape(prompt)}"}]}'
+	body := '{"model":"${json_escape(model)}","max_tokens":4096,"stream":true,"messages":[{"role":"user","content":${anthropic_user_content(prompt)!}}]}'
 	mut request := http.new_request(.post, '${adapter.base_url}/messages', body)
 	request.add_custom_header('x-api-key', adapter.api_key)!
 	request.add_custom_header('anthropic-version', '2023-06-01')!
@@ -334,7 +334,7 @@ fn json_escape(value string) string {
 		'\\t')
 }
 
-fn json_field(source string, name string) string {
+pub fn json_field(source string, name string) string {
 	needle := '"${name}"'
 	start := source.index(needle) or { return '' }
 	mut rest := source[start + needle.len..].trim_left(' \t\r\n:')

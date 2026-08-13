@@ -44,6 +44,24 @@ fn test_compaction_preserves_transcript_and_checkpoints() {
 	assert checkpoint.result == 'summary'
 }
 
+fn test_reasoning_only_compaction_creates_a_visible_checkpoint() {
+	mut transcript := []ContextItem{}
+	for index in 0 .. 10 {
+		transcript << ContextItem{
+			seq:     u64(index + 1)
+			kind:    if index < 5 { 'reasoning' } else { 'text' }
+			content: 'reason-${index}'
+			tokens:  70
+		}
+	}
+	projection := project_context(transcript, 1000, 'small:test', FakeSmallModel{ answer: 'unused' }) or {
+		panic(err)
+	}
+	checkpoint := projection.checkpoint or { panic('expected checkpoint') }
+	assert checkpoint.model == ''
+	assert checkpoint.result.contains('removed old reasoning')
+}
+
 fn test_recap_schedule_first_then_ten_minutes() {
 	mut scheduler := RecapScheduler{}
 	assert scheduler.should_recap(1000, 1)

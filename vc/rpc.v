@@ -96,6 +96,25 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 			save_session_meta(worker.meta)!
 			return json2.encode(worker.meta, escape_unicode: true)
 		}
+		'session.rename' {
+			name := validate_session_name(json_field(params, 'name'), worker.meta.id)!
+			worker.meta.name = name
+			worker.meta.updated_ms = time.now().unix_milli()
+			save_session_meta(worker.meta)!
+			return json2.encode(worker.meta, escape_unicode: true)
+		}
+		'session.context' {
+			percent := json_field(params, 'percent').int()
+			worker.meta.context_percent = if percent < 0 {
+				0
+			} else if percent > 100 {
+				100
+			} else {
+				percent
+			}
+			save_session_meta(worker.meta)!
+			return json2.encode(worker.meta, escape_unicode: true)
+		}
 		'session.recap' {
 			recap :=
 				sanitize_terminal(json_field(params, 'recap')).replace('\n', ' ').replace('\t', ' ').trim_space()

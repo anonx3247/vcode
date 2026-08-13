@@ -13,21 +13,26 @@ Configuration lives at `~/.config/vc/config.toml`. Session journals are append-o
 ## Commands
 
 ```text
-vc [options] <prompt>
+vc [--tool read|edit|shell|web]... <prompt>
+vc -p <prompt> [--tool read|edit|shell|web]...
 vc model list
 vc model set <provider:model> [--effort <level>]
+vc small-model set <provider:model>
 vc session list
 vc resume <id> [--move-session]
 vc session attach <id>
 vc --rpc
 ```
 
-The interactive UI provides `/model [provider:model]`, `/skill [skill-name]`, `/resume`, `/goal`, and `/review`. `/model`, `/skill`, and `/resume` use `fzf`; ordinary CLI lists stay plain and pipe-friendly. Skills are discovered at startup but their contents are read only after an explicit `/skill` command.
+The interactive UI provides `/model [provider:model]`, `/skill [skill-name]`, `/resume`, `/rename <name>`, `/goal`, and `/review`. Typing `/` opens a command picker. `/model`, `/skill`, and `/resume` use `fzf`; ordinary CLI lists stay plain and pipe-friendly. Skills are discovered at startup but their contents are read only after an explicit `/skill` command. Named sessions can be reopened with `vc resume <name>`.
 `/review <instructions>` starts a fresh read-only tool-using agent, clearly marks its start and finish, and adds only its final findings to the main session context.
 Setting `/goal <goal>` immediately starts the main agent with that goal; no follow-up message is required.
 Running `vc` without a prompt starts a new interactive session. If its configured default provider is unavailable, it opens the model picker before creating the session.
 Each turn replays a bounded projection of the session's user, assistant, system, and tool history. The full transcript remains in the append-only journal. Session recaps are generated after the first completed turn and refreshed after ten active minutes; `/resume` shows the recap first.
-`vc resume <id>` reopens the conversational TUI and prints its recap before the prompt. `vc session attach <id>` only attaches to the persistent worker for live RPC use.
+The compact prompt shows estimated context use. Compaction checkpoints are announced in the transcript. Local PNG, JPEG, GIF, and WebP paths in a prompt are attached to OpenAI-compatible requests; on macOS, Ctrl-V saves a clipboard image to a temporary PNG and inserts its path.
+`vc resume <id-or-name>` reopens the conversational TUI and prints its recap before the prompt. `vc session attach <id-or-name>` only attaches to the persistent worker for live RPC use.
+
+`vc -p` runs one tool-using agent to completion for scripting and subagent use. It prints only lowercase tool names followed by the final answer. Repeat `--tool` to restrict its tools; without it, all tools are enabled.
 
 Example configuration:
 

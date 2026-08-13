@@ -33,6 +33,28 @@ fn test_journal_recent_read_is_bounded_to_complete_records() {
 	assert recent.all(it.data.starts_with('message-'))
 }
 
+fn test_named_sessions_resolve_and_names_are_unique() {
+	old_state := os.getenv('XDG_STATE_HOME')
+	tmp := os.join_path(os.temp_dir(), 'vc-named-session-${os.getpid()}')
+	os.setenv('XDG_STATE_HOME', tmp, true)
+	defer {
+		os.setenv('XDG_STATE_HOME', old_state, true)
+		os.rmdir_all(tmp) or {}
+	}
+	mut first := new_session_meta('openai:test', 'low', os.temp_dir())
+	first.name = validate_session_name('matrix-review', first.id) or { panic(err) }
+	save_session_meta(first) or { panic(err) }
+	resolved := resolve_session_meta('matrix-review') or { panic(err) }
+	assert resolved.id == first.id
+	mut second := new_session_meta('openai:test', 'low', os.temp_dir())
+	second.id = 'other-session'
+	validate_session_name('matrix-review', second.id) or {
+		assert err.msg().contains('already in use')
+		return
+	}
+	assert false
+}
+
 fn test_instruction_import_cycles() {
 	tmp := os.join_path(os.temp_dir(), 'vc-instructions-${os.getpid()}')
 	os.mkdir_all(tmp) or { panic(err) }
