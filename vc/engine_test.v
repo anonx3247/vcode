@@ -41,6 +41,39 @@ fn test_edit_requires_fresh_read() {
 	assert false
 }
 
+fn test_edit_can_create_but_not_overwrite_a_new_file() {
+	path := os.join_path(os.temp_dir(), 'vc-edit-create-${os.getpid()}')
+	defer { os.rm(path) or {} }
+	os.rm(path) or {}
+	hash := edit_tool(path, '', 'new contents', '') or { panic(err) }
+	assert os.read_file(path) or { panic(err) } == 'new contents'
+	assert hash.len == 64
+	edit_tool(path, '', 'overwritten', '') or {
+		assert err.msg().contains('old text cannot be empty')
+		assert os.read_file(path) or { panic(err) } == 'new contents'
+		return
+	}
+	assert false
+}
+
+fn test_new_file_edit_rejects_old_text_and_read_fingerprints() {
+	path := os.join_path(os.temp_dir(), 'vc-edit-create-invalid-${os.getpid()}')
+	defer { os.rm(path) or {} }
+	os.rm(path) or {}
+	edit_tool(path, 'missing', 'contents', '') or {
+		assert err.msg().contains('requires empty old text')
+		assert !os.exists(path)
+		edit_tool(path, '', 'contents', 'stale-fingerprint') or {
+			assert err.msg().contains('does not accept a Read fingerprint')
+			assert !os.exists(path)
+			return
+		}
+		assert false
+		return
+	}
+	assert false
+}
+
 fn test_read_defaults_to_3000_lines_and_supports_ranges() {
 	path := os.join_path(os.temp_dir(), 'vc-read-range-${os.getpid()}')
 	defer { os.rm(path) or {} }

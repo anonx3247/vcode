@@ -1,5 +1,15 @@
 module vc
 
+fn test_thinking_spinner_uses_stable_braille_frames() {
+	assert thinking_frames == ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+	for frame in thinking_frames {
+		runes := frame.runes()
+		assert runes.len == 1
+		assert runes[0] >= `⠁`
+		assert runes[0] <= `⣿`
+	}
+}
+
 fn test_shell_tool_card_is_structured_and_highlighted() {
 	rendered := render_tool_call('Shell', '{"command":"rg --files | head -10","timeout_ms":10000}')
 	plain := sanitize_terminal(rendered)

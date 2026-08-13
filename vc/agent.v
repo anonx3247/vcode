@@ -173,11 +173,14 @@ fn stream_agent_response(base_url string, key string, body string, mut display T
 		'${base_url}/responses'])
 	process.set_redirect_stdio()
 	process.run()
+	display.spinner.begin()
+	defer { display.spinner.stop() }
 	mut parser := new_sse_parser(1024 * 1024)
 	mut result := AgentStreamResponse{}
 	mut raw_error := ''
 	mut errors := ''
 	for process.is_alive() {
+		display.spinner.tick(time.now().unix_milli())
 		raw_error = consume_agent_stream(process.stdout_read(), mut parser, mut result, mut
 			display, raw_error)!
 		errors = bounded_text(errors + process.stderr_read(), 16 * 1024)
@@ -209,14 +212,17 @@ fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStre
 		type_name := json_field(message.data, 'type')
 		if type_name == 'response.output_item.added'
 			&& message.data.contains('"type":"function_call"') {
+			display.spinner.stop()
 			collapse_visible_tool_result(display.expanded_result)
 			display.expanded_result = ''
 		} else if type_name == 'response.output_text.delta' {
+			display.spinner.stop()
 			delta := json_field(message.data, 'delta')
 			result.answer += delta
 			print(display.markdown.push(delta, terminal_columns()))
 			flush_stdout()
 		} else if type_name == 'response.completed' {
+			display.spinner.stop()
 			print(display.markdown.finish(terminal_columns()))
 			flush_stdout()
 			result.raw_output = json_array_field(message.data, 'output')!
@@ -225,6 +231,7 @@ fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStre
 				if item.type == 'function_call' { result.calls << item }
 			}
 		} else if type_name == 'error' {
+			display.spinner.stop()
 			return error(json_field(message.data, 'message'))
 		}
 	}
@@ -307,5 +314,5 @@ fn resolve_tool_path(cwd string, path string) string {
 }
 
 fn agent_tool_definitions() string {
-	return '[{"type":"function","name":"Read","description":"Read a 1-based inclusive line range from a file and return its content and whole-file freshness fingerprint. Defaults to the first 3000 lines.","parameters":{"type":"object","properties":{"path":{"type":"string"},"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false}},{"type":"function","name":"Edit","description":"Replace one exact occurrence in a file previously read with Read.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"replacement":{"type":"string"},"fingerprint":{"type":"string"}},"required":["path","old","replacement","fingerprint"],"additionalProperties":false}},{"type":"function","name":"Shell","description":"Run a command in an isolated login shell in the session working directory.","parameters":{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}},{"type":"function","name":"WebSearch","description":"Search the web with Brave Search.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]'
+	return '[{"type":"function","name":"Read","description":"Read a 1-based inclusive line range from a file and return its content and whole-file freshness fingerprint. Defaults to the first 3000 lines.","parameters":{"type":"object","properties":{"path":{"type":"string"},"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false}},{"type":"function","name":"Edit","description":"Replace one exact occurrence in an existing file using a fresh Read fingerprint. To create a new file without Read, use empty old text and omit fingerprint (or use fingerprint 0).","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"replacement":{"type":"string"},"fingerprint":{"type":"string"}},"required":["path","old","replacement"],"additionalProperties":false}},{"type":"function","name":"Shell","description":"Run a command in an isolated login shell in the session working directory.","parameters":{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}},{"type":"function","name":"WebSearch","description":"Search the web with Brave Search.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]'
 }

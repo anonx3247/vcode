@@ -2,9 +2,11 @@ module vc
 
 import json2
 import os
+import time
 
 const ansi_reset = '\x1b[0m'
 const ansi_dim = '\x1b[2m'
+const thinking_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 struct BraveSearchResponse {
 	web BraveWebResults
@@ -24,6 +26,41 @@ struct ToolDisplayState {
 mut:
 	expanded_result string
 	markdown        MarkdownStreamState
+	spinner         ThinkingSpinner
+}
+
+struct ThinkingSpinner {
+mut:
+	active  bool
+	visible bool
+	frame   int
+	last_ms i64
+}
+
+fn (mut spinner ThinkingSpinner) begin() {
+	spinner.active = os.is_atty(1) > 0
+	spinner.visible = false
+	spinner.frame = 0
+	spinner.last_ms = 0
+	spinner.tick(time.now().unix_milli())
+}
+
+fn (mut spinner ThinkingSpinner) tick(now_ms i64) {
+	if !spinner.active || (spinner.last_ms > 0 && now_ms - spinner.last_ms < 80) { return }
+	print('\r\x1b[2K\x1b[34m${thinking_frames[spinner.frame % thinking_frames.len]}${ansi_reset} Thinking…')
+	flush_stdout()
+	spinner.visible = true
+	spinner.frame++
+	spinner.last_ms = now_ms
+}
+
+fn (mut spinner ThinkingSpinner) stop() {
+	if spinner.visible {
+		print('\r\x1b[2K')
+		flush_stdout()
+	}
+	spinner.active = false
+	spinner.visible = false
 }
 
 fn render_tool_call(name string, arguments string) string {

@@ -23,6 +23,16 @@ fn test_read_tool_schema_exposes_optional_line_range() {
 	assert tools.contains('Defaults to the first 3000 lines')
 }
 
+fn test_edit_tool_schema_allows_new_file_creation_without_fingerprint() {
+	tools := agent_tool_definitions()
+	edit_start := tools.index('"name":"Edit"') or { panic('Edit schema missing') }
+	edit_end := tools.index_after('"name":"Shell"', edit_start) or { panic('Shell schema missing') }
+	edit := tools[edit_start..edit_end]
+	assert edit.contains('To create a new file without Read')
+	assert edit.contains('"required":["path","old","replacement"]')
+	assert !edit.contains('"required":["path","old","replacement","fingerprint"]')
+}
+
 fn test_agent_stream_collects_text_and_completed_tool_calls() {
 	mut parser := new_sse_parser(4096)
 	mut result := AgentStreamResponse{}

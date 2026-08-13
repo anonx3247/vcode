@@ -43,6 +43,17 @@ pub fn read_tool_range(path string, requested_start int, requested_end int, max_
 }
 
 pub fn edit_tool(path string, old string, replacement string, fingerprint string) !string {
+	if !os.exists(path) {
+		if old != '' { return error('new file creation requires empty old text') }
+		if fingerprint !in ['', '0'] {
+			return error('new file creation does not accept a Read fingerprint')
+		}
+		tmp := '${path}.vc.create.${os.getpid()}'
+		defer { os.rm(tmp) or {} }
+		os.write_file(tmp, replacement)!
+		os.link(tmp, path) or { return error('could not create new file: ${err.msg()}') }
+		return sha256.hexhash(replacement)
+	}
 	if old == '' { return error('old text cannot be empty') }
 	current := os.read_file(path)!
 	if sha256.hexhash(current) != fingerprint { return error('file changed since Read') }
