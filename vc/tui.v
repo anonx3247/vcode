@@ -185,7 +185,7 @@ fn run_tui_turn(mut state TuiState, message string) ! {
 	prompt += '\nUser request:\n' + message
 	result := run_agent_turn(state.meta.model, prompt, state.meta.cwd, load_config(config_path())!)!
 	answer := result.answer
-	println(answer)
+	if !result.streamed { println(answer) }
 	if os.exists(socket_path(state.meta.id)) {
 		_ = socket_rpc(state.meta.id,
 			'{"jsonrpc":"2.0","id":2,"method":"session.append","params":{"kind":"assistant","data":"${json_escape(answer)}"}}') or {
