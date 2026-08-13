@@ -2,6 +2,7 @@ module vc
 
 import json2
 import os
+import term
 import time
 
 const ansi_reset = '\x1b[0m'
@@ -245,6 +246,10 @@ fn collapse_visible_tool_result(rendered string) {
 }
 
 fn tool_result_collapse_sequence(rendered string, columns int) string {
+	return tool_result_collapse_sequence_for_viewport(rendered, columns, terminal_rows())
+}
+
+fn tool_result_collapse_sequence_for_viewport(rendered string, columns int, viewport_rows int) string {
 	width := if columns >= 20 { columns } else { 80 }
 	mut rows := 0
 	for line in sanitize_terminal(rendered).split_into_lines() {
@@ -252,12 +257,24 @@ fn tool_result_collapse_sequence(rendered string, columns int) string {
 		rows += if characters == 0 { 1 } else { (characters + width - 1) / width }
 	}
 	if rows == 0 { return '' }
+	// Cursor-up cannot reach content that has already scrolled out of the viewport. If the
+	// preview filled the screen, clearing from the clamped cursor would erase earlier calls.
+	if viewport_rows > 0 && rows >= viewport_rows { return '' }
 	return '\x1b[${rows}A\r\x1b[J'
 }
 
 fn terminal_columns() int {
 	configured := os.getenv('COLUMNS').int()
-	return if configured >= 20 { configured } else { 80 }
+	if configured >= 20 { return configured }
+	columns, _ := term.get_terminal_size()
+	return if columns >= 20 { columns } else { 80 }
+}
+
+fn terminal_rows() int {
+	configured := os.getenv('LINES').int()
+	if configured > 0 { return configured }
+	_, rows := term.get_terminal_size()
+	return if rows > 0 { rows } else { 24 }
 }
 
 fn render_web_search_result(result string) string {

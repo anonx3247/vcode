@@ -66,6 +66,9 @@ pub fn run_tui(meta SessionMeta) ! {
 				continue
 			}
 			if message != '' { println(message) }
+			if prompt := goal_launch_prompt(line) {
+				run_tui_turn(mut state, prompt) or { eprintln('goal turn: ${err}') }
+			}
 			continue
 		}
 		run_tui_turn(mut state, line) or {
@@ -73,6 +76,13 @@ pub fn run_tui(meta SessionMeta) ! {
 			continue
 		}
 	}
+}
+
+fn goal_launch_prompt(command string) ?string {
+	if !command.starts_with('/goal ') { return none }
+	goal := command['/goal '.len..].trim_space()
+	if goal == '' || goal in ['pause', 'resume', 'clear'] { return none }
+	return 'Goal: ${goal}\n\nBegin working toward this goal immediately. Use the available tools and continue until the goal is complete or you are genuinely blocked.'
 }
 
 pub fn handle_tui_command(mut state TuiState, command string) !string {
@@ -208,10 +218,16 @@ fn run_tui_turn(mut state TuiState, message string) ! {
 	refresh_session_recap(mut state, cfg) or { eprintln('recap: ${err}') }
 	goal := load_goal(state.meta.id)
 	if goal.goal != '' && !goal.paused {
-		judgement := evaluate_goal(ProviderSmallModel{
-			model:  load_config(config_path())!.small_model
-			config: load_config(config_path())!
-		}, goal.goal, answer)!
+		judgement := evaluate_goal_with_fallback(ProviderSmallModel{
+			model:  cfg.small_model
+			config: cfg
+		}, ProviderSmallModel{
+			model:  state.meta.model
+			config: cfg
+		}, goal.goal, answer) or {
+			eprintln('goal check: ${err}')
+			return
+		}
 		println(judgement)
 		if judgement.trim_space() == '<goal achieved>' { save_goal(state.meta.id, GoalState{})! }
 	}

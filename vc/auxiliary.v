@@ -70,6 +70,12 @@ pub fn evaluate_goal(model SmallModel, goal string, transcript string) !string {
 		'Goal: ${goal}\n\nTranscript:\n${transcript}', 256)!
 }
 
+pub fn evaluate_goal_with_fallback(primary SmallModel, fallback SmallModel, goal string, transcript string) !string {
+	return evaluate_goal(primary, goal, transcript) or {
+		evaluate_goal(fallback, goal, transcript)!
+	}
+}
+
 pub struct ReviewContext {
 pub:
 	instructions string

@@ -53,6 +53,13 @@ fn test_tool_result_collapse_rewinds_and_clears_rendered_rows() {
 	assert sequence == '\x1b[3A\r\x1b[J'
 }
 
+fn test_tool_result_collapse_never_clears_a_scrolled_viewport() {
+	tall := ['one', 'two', 'three', 'four'].join('\n')
+	assert tool_result_collapse_sequence_for_viewport(tall, 80, 4) == ''
+	assert tool_result_collapse_sequence_for_viewport(tall, 80, 3) == ''
+	assert tool_result_collapse_sequence_for_viewport(tall, 80, 5) == '\x1b[4A\r\x1b[J'
+}
+
 fn test_read_result_does_not_render_file_content() {
 	result := '{"path":"/tmp/file","content":"secret contents","fingerprint":"abcdef1234567890","truncated":false}'
 	plain := sanitize_terminal(render_tool_result('Read', result, '{"path":"/tmp/file"}'))

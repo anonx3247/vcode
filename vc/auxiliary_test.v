@@ -6,11 +6,21 @@ struct FakeSmallModel {
 	answer string
 }
 
+struct FailingSmallModel {}
+
 fn (model FakeSmallModel) complete(system string, prompt string, max_tokens int) !string {
 	_ = system
 	_ = prompt
 	_ = max_tokens
 	return model.answer
+}
+
+fn (model FailingSmallModel) complete(system string, prompt string, max_tokens int) !string {
+	_ = model
+	_ = system
+	_ = prompt
+	_ = max_tokens
+	return error('primary unavailable')
 }
 
 fn test_compaction_preserves_transcript_and_checkpoints() {
@@ -45,6 +55,13 @@ fn test_generated_recap_is_one_safe_picker_line() {
 	recap := generate_recap(FakeSmallModel{ answer: '\033[31mWorked\033[0m\non history.\tDone.' },
 		'transcript') or { panic(err) }
 	assert recap == 'Worked on history. Done.'
+}
+
+fn test_goal_evaluation_falls_back_when_small_model_is_unavailable() {
+	judgement := evaluate_goal_with_fallback(FailingSmallModel{}, FakeSmallModel{
+		answer: '<goal achieved>'
+	}, 'ship it', 'done') or { panic(err) }
+	assert judgement == '<goal achieved>'
 }
 
 fn test_review_has_no_edit_tool() {

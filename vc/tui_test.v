@@ -104,6 +104,18 @@ fn test_unknown_tui_command_is_reported_to_the_caller() {
 	}
 }
 
+fn test_setting_goal_builds_an_immediate_agent_prompt() {
+	prompt := goal_launch_prompt('/goal compare the three implementations') or {
+		panic('expected goal launch prompt')
+	}
+	assert prompt.contains('Goal: compare the three implementations')
+	assert prompt.contains('Begin working toward this goal immediately')
+	for command in ['/goal', '/goal pause', '/goal resume', '/goal clear'] {
+		if _ := goal_launch_prompt(command) { assert false
+		 }
+	}
+}
+
 fn test_terminal_control_corpus_is_removed() {
 	for sample in ['\033]0;owned\007', '\033[31mred\033[0m', '\000x', '\033[999999z'] {
 		clean := sanitize_terminal(sample)
