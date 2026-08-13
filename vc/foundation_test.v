@@ -39,8 +39,22 @@ fn test_custom_provider_kind_and_environment_routing() {
 		api_key_env:  'VC_TEST_API_KEY'
 	}
 	assert provider_kind('isara', provider) or { panic(err) } == 'openai'
-	assert provider_base_url('openai', provider) == 'https://proxy.example/v1'
+	assert provider_base_url('openai', provider) or { panic(err) } == 'https://proxy.example/v1'
 	assert provider_api_key('openai', provider) == 'test-key'
+}
+
+fn test_configured_provider_base_url_environment_is_required() {
+	os.unsetenv('VC_TEST_MISSING_BASE_URL')
+	provider := ProviderConfig{
+		name:         'isara'
+		kind:         'openai'
+		base_url_env: 'VC_TEST_MISSING_BASE_URL'
+	}
+	provider_base_url('openai', provider) or {
+		assert err.msg().contains('VC_TEST_MISSING_BASE_URL is not set')
+		return
+	}
+	assert false
 }
 
 fn test_model_catalog_requires_configured_providers() {

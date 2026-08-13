@@ -60,7 +60,7 @@ fn fetch_provider_models(name string, provider ProviderConfig) ![]string {
 	kind := provider_kind(name, provider)!
 	key := provider_api_key(kind, provider)
 	if key == '' { return error('no API key') }
-	base := provider_base_url(kind, provider)
+	base := provider_base_url(kind, provider)!
 	if provider.base_url != '' || provider.base_url_env != '' {
 		return curl_fetch_provider_models(kind, base, key)!
 	}
