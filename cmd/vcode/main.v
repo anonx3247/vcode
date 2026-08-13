@@ -17,6 +17,11 @@ fn run(args []string) ! {
 	}
 	if args.len > 0 && args[0] == '--worker' {
 		if args.len != 2 { return error('usage: vc --worker <session-id>') }
+		$if !windows {
+			os.fd_close(0)
+			os.fd_close(1)
+			os.fd_close(2)
+		}
 		vc.serve_session(args[1])!
 		return
 	}

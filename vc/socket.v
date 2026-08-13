@@ -62,7 +62,12 @@ pub fn start_session_worker(id string) ! {
 	}
 	mut process := os.new_process(os.executable())
 	process.set_args(['--worker', id])
-	process.set_redirect_stdio()
+	$if windows {
+		process.create_no_window = true
+	} $else {
+		process.use_pgroup = true
+		process.set_stdin_path('/dev/null')
+	}
 	process.run()
 	for _ in 0 .. 100 {
 		if os.exists(path) { return }
