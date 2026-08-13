@@ -78,7 +78,7 @@ pub fn stream_completion(model_ref string, prompt string, cfg Config) ![]StreamE
 	kind := provider_kind(model.provider, provider)!
 	key := provider_api_key(kind, provider)
 	if key == '' { return error('missing API key for ${model.provider}') }
-	base_url := provider_base_url(kind, provider)
+	base_url := provider_base_url(kind, provider)!
 	if provider.base_url != '' || provider.base_url_env != '' {
 		return curl_stream_completion(kind, base_url, key, model.model, prompt)!
 	}
@@ -207,10 +207,14 @@ fn provider_api_key(kind string, provider ProviderConfig) string {
 	return os.getenv(if kind == 'openai' { 'OPENAI_API_KEY' } else { 'ANTHROPIC_API_KEY' })
 }
 
-fn provider_base_url(kind string, provider ProviderConfig) string {
+fn provider_base_url(kind string, provider ProviderConfig) !string {
 	if provider.base_url != '' { return provider.base_url.trim_right('/') }
-	if provider.base_url_env != '' && os.getenv(provider.base_url_env) != '' {
-		return os.getenv(provider.base_url_env).trim_right('/')
+	if provider.base_url_env != '' {
+		value := os.getenv(provider.base_url_env)
+		if value == '' {
+			return error('environment variable ${provider.base_url_env} is not set for provider endpoint')
+		}
+		return value.trim_right('/')
 	}
 	return if kind == 'openai' {
 		'https://api.openai.com/v1'
