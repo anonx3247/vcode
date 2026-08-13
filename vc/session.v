@@ -1,6 +1,6 @@
 module vc
 
-import json
+import json2
 import os
 import time
 
@@ -11,6 +11,7 @@ pub mut:
 	effort     string
 	cwd        string
 	recap      string
+	recap_ms   i64
 	created_ms i64
 	updated_ms i64
 }
@@ -41,12 +42,12 @@ pub fn save_session_meta(meta SessionMeta) ! {
 	os.mkdir_all(dir)!
 	path := os.join_path(dir, 'session.json')
 	tmp := '${path}.tmp'
-	os.write_file(tmp, json.encode_pretty(meta))!
+	os.write_file(tmp, json2.encode(meta, prettify: true, escape_unicode: true))!
 	os.mv(tmp, path)!
 }
 
 pub fn load_session_meta(id string) !SessionMeta {
-	return json.decode(SessionMeta, os.read_file(os.join_path(session_dir(id), 'session.json'))!)!
+	return json2.decode[SessionMeta](os.read_file(os.join_path(session_dir(id), 'session.json'))!)!
 }
 
 pub fn list_sessions() ![]SessionMeta {

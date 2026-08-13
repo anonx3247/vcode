@@ -1,7 +1,8 @@
 module vc
 
 import crypto.sha256
-import json
+import json2
+import os
 import time
 
 pub struct ContextItem {
@@ -85,7 +86,90 @@ pub fn project_context(transcript []ContextItem, context_limit int, small_model 
 }
 
 pub fn journal_checkpoint(journal Journal, checkpoint SummaryCheckpoint, seq u64) ! {
-	journal.append(seq, 'summary_checkpoint', json.encode(checkpoint))!
+	journal.append(seq, 'summary_checkpoint', json2.encode(checkpoint, escape_unicode: true))!
+}
+
+pub fn build_session_prompt(session_id string, instructions string, skill string, current_message string, cfg Config) !string {
+	journal := open_journal(os.join_path(session_dir(session_id), 'transcript.jsonl'))!
+	records := journal.read_recent(4 * 1024 * 1024)!
+	mut items := []ContextItem{}
+	mut removed_current := false
+	for index, record in records {
+		if record.kind == 'summary_checkpoint' { continue
+		 }
+		if !removed_current && index == records.len - 1 && record.kind == 'user'
+			&& record.data == current_message {
+			removed_current = true
+			continue
+		}
+		if record.kind !in ['user', 'assistant', 'system', 'tool_call', 'tool_result', 'summary',
+			'abridged_tools'] {
+			continue
+		}
+		items << ContextItem{
+			seq:     u64(index + 1)
+			kind:    record.kind
+			content: record.data
+			tokens:  estimate_tokens(record.data)
+		}
+	}
+	projection := project_context(items, 128_000, cfg.small_model, ProviderSmallModel{
+		model:  cfg.small_model
+		config: cfg
+	}) or {
+		ContextProjection{
+			items: bounded_context_tail(items, 100_000)
+		}
+	}
+	mut prompt := instructions
+	if skill != '' { prompt += '\n\nThe user explicitly activated this skill:\n' + skill }
+	if projection.items.len > 0 {
+		prompt += '\n\nPrevious session history:\n'
+		for item in projection.items {
+			prompt += '\n[${context_kind_label(item.kind)}]\n${item.content}\n'
+		}
+	}
+	prompt += '\n\nCurrent user request:\n' + current_message
+	return prompt
+}
+
+fn bounded_context_tail(items []ContextItem, token_limit int) []ContextItem {
+	mut result := []ContextItem{}
+	mut used := 0
+	for index := items.len - 1; index >= 0; index-- {
+		item := items[index]
+		tokens := if item.tokens > 0 { item.tokens } else { estimate_tokens(item.content) }
+		if used + tokens > token_limit { break
+		 }
+		result.prepend(item)
+		used += tokens
+	}
+	return result
+}
+
+fn context_kind_label(kind string) string {
+	return match kind {
+		'user' { 'User' }
+		'assistant' { 'Assistant' }
+		'system' { 'System' }
+		'tool_call' { 'Tool call' }
+		'tool_result' { 'Tool result' }
+		'summary' { 'Earlier history summary' }
+		'abridged_tools' { 'Earlier tool activity' }
+		else { kind }
+	}
+}
+
+pub fn session_recap_source(session_id string) !string {
+	journal := open_journal(os.join_path(session_dir(session_id), 'transcript.jsonl'))!
+	records := journal.read_recent(64 * 1024)!
+	mut lines := []string{}
+	for record in records {
+		if record.kind in ['user', 'assistant', 'system', 'tool_call', 'tool_result'] {
+			lines << '${context_kind_label(record.kind)}: ${record.data}'
+		}
+	}
+	return lines.join('\n')
 }
 
 fn abridge_tools(items []ContextItem) []ContextItem {

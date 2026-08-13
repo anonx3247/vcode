@@ -41,14 +41,36 @@ pub fn socket_rpc(id string, request string) !string {
 }
 
 pub fn start_session_worker(id string) ! {
-	if os.exists(socket_path(id)) { return }
+	path := socket_path(id)
+	if os.exists(path) {
+		response := socket_rpc(id, '{"jsonrpc":"2.0","id":1,"method":"session.attach","params":{}}') or {
+			''
+		}
+		if response.contains('"result"') { return }
+		os.rm(path) or {}
+	}
 	mut process := os.new_process(os.executable())
 	process.set_args(['--worker', id])
 	process.set_redirect_stdio()
 	process.run()
 	for _ in 0 .. 100 {
-		if os.exists(socket_path(id)) { return }
+		if os.exists(path) { return }
 		time.sleep(10 * time.millisecond)
 	}
 	return error('worker did not create its socket')
+}
+
+pub fn session_rpc(id string, request string) !string {
+	start_session_worker(id)!
+	response := socket_rpc(id, request) or {
+		path := socket_path(id)
+		os.rm(path) or {}
+		start_session_worker(id)!
+		socket_rpc(id, request)!
+	}
+	if response.contains('"error"') {
+		message := json_field(response, 'message')
+		return error(if message == '' { 'session worker request failed' } else { message })
+	}
+	return response
 }

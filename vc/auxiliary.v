@@ -1,6 +1,6 @@
 module vc
 
-import json
+import json2
 import os
 import time
 
@@ -44,7 +44,7 @@ pub fn (mut scheduler RecapScheduler) should_recap(now_ms i64, latest_seq u64) b
 pub fn generate_recap(model SmallModel, transcript string) !string {
 	recap :=
 		model.complete('Write one plain sentence recapping this coding session.', transcript, 80)!
-	return recap.replace('\n', ' ').trim_space()
+	return sanitize_terminal(recap).replace('\n', ' ').replace('\t', ' ').trim_space()
 }
 
 pub struct GoalState {
@@ -54,11 +54,12 @@ pub mut:
 }
 
 pub fn save_goal(session_id string, state GoalState) ! {
-	os.write_file(os.join_path(session_dir(session_id), 'goal.json'), json.encode(state))!
+	os.write_file(os.join_path(session_dir(session_id), 'goal.json'),
+		json2.encode(state, escape_unicode: true))!
 }
 
 pub fn load_goal(session_id string) GoalState {
-	return json.decode(GoalState, os.read_file(os.join_path(session_dir(session_id), 'goal.json')) or {
+	return json2.decode[GoalState](os.read_file(os.join_path(session_dir(session_id), 'goal.json')) or {
 		return GoalState{}
 	}) or { GoalState{} }
 }

@@ -1,6 +1,7 @@
 module vc
 
 import os
+import time
 
 pub struct TuiState {
 pub mut:
@@ -106,10 +107,13 @@ pub fn handle_tui_command(mut state TuiState, command string) !string {
 		}
 		'/resume' {
 			sessions := list_sessions()!
-			rows := sessions.map('${it.id}\t${it.model}\t${it.cwd}\t${it.recap}')
+			rows :=
+				sessions.map('${if it.recap == '' { '(No recap yet)' } else { it.recap }}\t${it.id}\t${it.model}\t${it.cwd}')
 			choice := fzf_select(rows, 'resume> ')!
 			if choice == '' { return '' }
-			id := choice.all_before('\t')
+			fields := choice.split('\t')
+			if fields.len < 2 { return error('invalid session selection') }
+			id := fields[1]
 			mut resumed := load_session_meta(id)!
 			if resumed.cwd != os.real_path(os.getwd()) {
 				print('Move session from ${resumed.cwd} to ${os.getwd()}? [y/N] ')
@@ -175,27 +179,22 @@ pub fn handle_tui_command(mut state TuiState, command string) !string {
 }
 
 fn run_tui_turn(mut state TuiState, message string) ! {
-	if os.exists(socket_path(state.meta.id)) {
-		_ = socket_rpc(state.meta.id,
-			'{"jsonrpc":"2.0","id":1,"method":"session.message","params":{"message":"${json_escape(message)}"}}') or {
-			''
-		}
-	}
+	_ = session_rpc(state.meta.id,
+		'{"jsonrpc":"2.0","id":1,"method":"session.message","params":{"message":"${json_escape(message)}"}}')!
 	instructions := load_instructions(state.meta.cwd)!
-	mut prompt := instructions.content
-	if state.skill_content != '' {
-		prompt += '\nThe user explicitly activated this skill:\n' + state.skill_content
-	}
-	prompt += '\nUser request:\n' + message
-	result := run_agent_turn(state.meta.model, prompt, state.meta.cwd, load_config(config_path())!)!
+	cfg := load_config(config_path())!
+	prompt := build_session_prompt(state.meta.id, instructions.content, state.skill_content,
+		message, cfg)!
+	result := run_agent_turn(state.meta.model, prompt, state.meta.cwd, cfg)!
 	answer := result.answer
 	if !result.streamed { println(answer) }
-	if os.exists(socket_path(state.meta.id)) {
-		_ = socket_rpc(state.meta.id,
-			'{"jsonrpc":"2.0","id":2,"method":"session.append","params":{"kind":"assistant","data":"${json_escape(answer)}"}}') or {
-			''
-		}
+	for event in result.history {
+		_ = session_rpc(state.meta.id,
+			'{"jsonrpc":"2.0","id":2,"method":"session.append","params":{"kind":"${json_escape(event.kind)}","data":"${json_escape(event.data)}"}}')!
 	}
+	_ = session_rpc(state.meta.id,
+		'{"jsonrpc":"2.0","id":3,"method":"session.append","params":{"kind":"assistant","data":"${json_escape(answer)}"}}')!
+	refresh_session_recap(mut state, cfg) or { eprintln('recap: ${err}') }
 	goal := load_goal(state.meta.id)
 	if goal.goal != '' && !goal.paused {
 		judgement := evaluate_goal(ProviderSmallModel{
@@ -205,6 +204,24 @@ fn run_tui_turn(mut state TuiState, message string) ! {
 		println(judgement)
 		if judgement.trim_space() == '<goal achieved>' { save_goal(state.meta.id, GoalState{})! }
 	}
+}
+
+fn refresh_session_recap(mut state TuiState, cfg Config) ! {
+	now := time.now().unix_milli()
+	if state.meta.recap != '' && now - state.meta.recap_ms < 10 * 60 * 1000 { return }
+	transcript := session_recap_source(state.meta.id)!
+	if transcript == '' { return }
+	small_ref := parse_model_ref(cfg.small_model)!
+	model := if small_ref.provider in cfg.providers { cfg.small_model } else { state.meta.model }
+	recap := generate_recap(ProviderSmallModel{
+		model:  model
+		config: cfg
+	}, transcript)!
+	if recap == '' { return }
+	_ = session_rpc(state.meta.id,
+		'{"jsonrpc":"2.0","id":4,"method":"session.recap","params":{"recap":"${json_escape(recap)}"}}')!
+	state.meta.recap = recap
+	state.meta.recap_ms = now
 }
 
 pub fn available_models() ![]string {

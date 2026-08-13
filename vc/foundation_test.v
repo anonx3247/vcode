@@ -17,6 +17,22 @@ fn test_event_ring_is_bounded() {
 	assert ring.items[0].kind == 'b'
 }
 
+fn test_journal_recent_read_is_bounded_to_complete_records() {
+	tmp := os.join_path(os.temp_dir(), 'vc-journal-tail-${os.getpid()}.jsonl')
+	defer { os.rm(tmp) or {} }
+	journal := open_journal(tmp) or { panic(err) }
+	for index in 0 .. 8 {
+		journal.append(u64(index + 1), 'user', 'message-${index}-' + 'x'.repeat(40)) or {
+			panic(err)
+		}
+	}
+	recent := journal.read_recent(240) or { panic(err) }
+	assert recent.len > 0
+	assert recent.len < 8
+	assert recent#[-1..][0].data.starts_with('message-7-')
+	assert recent.all(it.data.starts_with('message-'))
+}
+
 fn test_instruction_import_cycles() {
 	tmp := os.join_path(os.temp_dir(), 'vc-instructions-${os.getpid()}')
 	os.mkdir_all(tmp) or { panic(err) }

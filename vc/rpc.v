@@ -1,6 +1,6 @@
 module vc
 
-import json
+import json2
 import os
 import time
 
@@ -34,10 +34,15 @@ pub mut:
 pub fn new_session_worker(meta SessionMeta) !SessionWorker {
 	dir := session_dir(meta.id)
 	os.mkdir_all(dir)!
+	journal := open_journal(os.join_path(dir, 'transcript.jsonl'))!
+	mut events := new_event_ring(2048)
+	for record in journal.read_recent(1024 * 1024)! {
+		if record.seq >= events.next_seq { events.next_seq = record.seq + 1 }
+	}
 	return SessionWorker{
 		meta:         meta
-		events:       new_event_ring(2048)
-		journal:      open_journal(os.join_path(dir, 'transcript.jsonl'))!
+		events:       events
+		journal:      journal
 		instructions: load_instructions(meta.cwd)!
 		fingerprints: map[string]string{}
 	}
@@ -59,13 +64,13 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 			meta := new_session_meta(if model == '' { worker.meta.model } else { model },
 				worker.meta.effort, if cwd == '' { worker.meta.cwd } else { cwd })
 			save_session_meta(meta)!
-			return json.encode(meta)
+			return json2.encode(meta, escape_unicode: true)
 		}
 		'session.list' {
-			return json.encode(list_sessions()!)
+			return json2.encode(list_sessions()!, escape_unicode: true)
 		}
 		'session.attach' {
-			return json.encode(worker.meta)
+			return json2.encode(worker.meta, escape_unicode: true)
 		}
 		'session.message' {
 			message := json_field(params, 'message')
@@ -73,7 +78,7 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 			worker.journal.append(event.seq, event.kind, event.data)!
 			worker.meta.updated_ms = time.now().unix_milli()
 			save_session_meta(worker.meta)!
-			return json.encode(event)
+			return json2.encode(event, escape_unicode: true)
 		}
 		'session.append' {
 			kind := json_field(params, 'kind')
@@ -81,7 +86,7 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 			if kind == '' { return error('kind is required') }
 			event := worker.events.push(kind, data)
 			worker.journal.append(event.seq, event.kind, event.data)!
-			return json.encode(event)
+			return json2.encode(event, escape_unicode: true)
 		}
 		'session.model' {
 			model := json_field(params, 'model')
@@ -89,17 +94,26 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 			worker.meta.model = model
 			worker.meta.updated_ms = time.now().unix_milli()
 			save_session_meta(worker.meta)!
-			return json.encode(worker.meta)
+			return json2.encode(worker.meta, escape_unicode: true)
+		}
+		'session.recap' {
+			recap :=
+				sanitize_terminal(json_field(params, 'recap')).replace('\n', ' ').replace('\t', ' ').trim_space()
+			if recap == '' { return error('recap is required') }
+			worker.meta.recap = recap
+			worker.meta.recap_ms = time.now().unix_milli()
+			save_session_meta(worker.meta)!
+			return json2.encode(worker.meta, escape_unicode: true)
 		}
 		'session.subscribe' {
 			cursor := json_int_field(params, 'cursor')
-			return json.encode(worker.events.after(u64(cursor)))
+			return json2.encode(worker.events.after(u64(cursor)), escape_unicode: true)
 		}
 		'session.read' {
 			path := json_field(params, 'path')
 			read := read_tool(path, 1024 * 1024)!
 			worker.fingerprints[read.path] = read.fingerprint
-			return json.encode(read)
+			return json2.encode(read, escape_unicode: true)
 		}
 		'session.cancel' {
 			worker.cancelled = true
@@ -117,7 +131,7 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 				'Session moved from ${old} to ${path}; local instructions were reloaded and Read fingerprints invalidated.')
 			worker.journal.append(event.seq, event.kind, event.data)!
 			save_session_meta(worker.meta)!
-			return json.encode(worker.meta)
+			return json2.encode(worker.meta, escape_unicode: true)
 		}
 		'session.shutdown' {
 			worker.shutdown = true

@@ -47,6 +47,13 @@ pub:
 	answer     string
 	tool_calls int
 	streamed   bool
+	history    []AgentHistoryEvent
+}
+
+pub struct AgentHistoryEvent {
+pub:
+	kind string
+	data string
 }
 
 pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !AgentTurnResult {
@@ -81,6 +88,7 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 	mut body := agent_request_body(model.model, input_items)
 	mut tool_calls := 0
 	mut display := ToolDisplayState{}
+	mut history := []AgentHistoryEvent{}
 	for _ in 0 .. 32 {
 		response := stream_agent_response(base_url, key, body, mut display)!
 		if response.answer != '' { println('') }
@@ -91,8 +99,16 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 			display.expanded_result = ''
 			call_line := render_tool_call(call.name, call.arguments)
 			println(call_line)
+			history << AgentHistoryEvent{
+				kind: 'tool_call'
+				data: '{"name":"${json_escape(call.name)}","arguments":${json2.encode(call.arguments)}}'
+			}
 			result := execute_agent_tool(call.name, call.arguments, cwd) or {
 				'{"error":"${json_escape(err.msg())}"}'
+			}
+			history << AgentHistoryEvent{
+				kind: 'tool_result'
+				data: '{"name":"${json_escape(call.name)}","result":${json2.encode(result)}}'
 			}
 			if tool_result_failed(call.name, result) {
 				replace_visible_tool_call(call_line, render_failed_tool_call(call.name,
@@ -110,6 +126,7 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 				answer:     response.answer
 				tool_calls: tool_calls
 				streamed:   true
+				history:    history
 			}
 		}
 		if response.raw_output.trim_space() == '' {
