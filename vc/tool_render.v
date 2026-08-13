@@ -5,7 +5,6 @@ import os
 
 const ansi_reset = '\x1b[0m'
 const ansi_dim = '\x1b[2m'
-const ansi_bold = '\x1b[1m'
 
 struct BraveSearchResponse {
 	web BraveWebResults
@@ -27,24 +26,18 @@ mut:
 }
 
 fn render_tool_call(name string, arguments string) string {
-	if name == 'Shell' {
-		args := json2.decode[ShellArguments](arguments) or { ShellArguments{} }
-		mut rendered := '${tool_style(name)}▶ Shell${ansi_reset}\n${ansi_dim}│${ansi_reset} $ ${highlight_shell(args.command)}'
-		if args.timeout_ms > 0 {
-			rendered += '\n${ansi_dim}└ timeout ${format_timeout(args.timeout_ms)}${ansi_reset}'
-		} else {
-			rendered += '\n${ansi_dim}└${ansi_reset}'
-		}
-		return rendered
-	}
 	detail := match name {
+		'Shell' {
+			args := json2.decode[ShellArguments](arguments) or { ShellArguments{} }
+			'$ ' + args.command
+		}
 		'Read' {
 			args := json2.decode[ReadArguments](arguments) or { ReadArguments{} }
 			args.path
 		}
 		'Edit' {
 			args := json2.decode[EditArguments](arguments) or { EditArguments{} }
-			'${args.path} · exact replacement'
+			args.path
 		}
 		'WebSearch' {
 			args := json2.decode[SearchArguments](arguments) or { SearchArguments{} }
@@ -54,32 +47,37 @@ fn render_tool_call(name string, arguments string) string {
 			'invalid arguments'
 		}
 	}
-	return '${tool_style(name)}▶ ${name}${ansi_reset}\n${ansi_dim}│${ansi_reset} ${single_line_preview(detail,
-		512)}\n${ansi_dim}└${ansi_reset}'
+	available := terminal_columns() - name.len - 2
+	preview := single_line_preview(detail, available)
+	if name == 'Shell' {
+		return '\x1b[1;34m${name}${ansi_reset} ${highlight_shell(preview)}'
+	}
+	return '\x1b[1;34m${name}${ansi_reset} ${preview}'
 }
 
 fn highlight_shell(command string) string {
-	tokens := shell_tokens(sanitize_terminal(command).replace('\n', ' '))
+	tokens := shell_tokens(command)
 	mut result := ''
-	mut expect_command := true
+	mut expect_command := false
 	for token in tokens {
 		if token.trim_space() == '' {
 			result += token
 			continue
 		}
-		if is_shell_operator(token) {
-			result += '\x1b[31m${token}${ansi_reset}'
+		if token == '$' && result == '' {
+			result += token
+			expect_command = true
+		} else if is_shell_operator(token) {
+			result += '\x1b[35m${token}${ansi_reset}'
 			if token in ['|', '||', '&&', ';'] { expect_command = true }
 		} else if token.starts_with("'") || token.starts_with('"') {
-			result += '\x1b[35m${token}${ansi_reset}'
+			result += '\x1b[33m${token}${ansi_reset}'
 			expect_command = false
 		} else if expect_command {
-			result += '\x1b[1;32m${token}${ansi_reset}'
-			expect_command = false
-		} else if token.starts_with('-') {
-			result += '\x1b[33m${token}${ansi_reset}'
-		} else if token.contains('$') {
 			result += '\x1b[36m${token}${ansi_reset}'
+			expect_command = false
+		} else if token.starts_with('-') || token.contains('$') {
+			result += '\x1b[35m${token}${ansi_reset}'
 		} else {
 			result += token
 		}
@@ -145,50 +143,49 @@ fn is_shell_operator(value string) bool {
 	return value in ['|', '||', '&', '&&', ';', '<', '>', '<<', '>>']
 }
 
-fn format_timeout(milliseconds int) string {
-	if milliseconds % 1000 == 0 { return '${milliseconds / 1000}s' }
-	return '${milliseconds}ms'
+fn render_failed_tool_call(name string, arguments string) string {
+	plain := sanitize_terminal(render_tool_call(name, arguments))
+	detail := plain.all_after(name).trim_space()
+	return '\x1b[1;31m${name}${ansi_reset} ${detail} ${ansi_dim}· failed${ansi_reset}'
 }
 
-fn render_tool_result(name string, result string) string {
+fn render_tool_result(name string, result string, arguments string) string {
 	if error_message := tool_error_message(result) {
-		return '\x1b[1;31m◀ ${name} error${ansi_reset}\n${render_preview(error_message, 2048, 24)}'
+		return render_preview(error_message, 2048, 24)
 	}
 	return match name {
 		'Shell' {
-			value := json2.decode[ShellResult](result) or {
-				return '\x1b[1;31m◀ Shell invalid result${ansi_reset}'
-			}
-			color := if value.exit_code == 0 && !value.timed_out {
-				'\x1b[1;32m'
-			} else {
-				'\x1b[1;31m'
-			}
-			status := if value.timed_out { 'timed out' } else { 'exit ${value.exit_code}' }
-			'${color}◀ Shell · ${status}${ansi_reset}\n${render_preview(value.output, 2048, 24)}'
+			value := json2.decode[ShellResult](result) or { return '' }
+			render_preview(value.output, 2048, 24)
 		}
 		'Read' {
-			value := json2.decode[ReadResult](result) or {
-				return '\x1b[1;31m◀ Read invalid result${ansi_reset}'
-			}
-			fingerprint := if value.fingerprint.len > 12 {
-				value.fingerprint[..12]
-			} else {
-				value.fingerprint
-			}
-			'${tool_style(name)}◀ Read · ${value.path} · ${fingerprint}${ansi_reset}'
+			''
 		}
 		'Edit' {
-			fingerprint := json_field(result, 'fingerprint')
-			'${tool_style(name)}◀ Edit · saved · ${single_line_preview(fingerprint, 16)}${ansi_reset}'
+			render_edit_diff(arguments)
 		}
 		'WebSearch' {
 			render_web_search_result(result)
 		}
 		else {
-			'${tool_style(name)}◀ ${name} · complete${ansi_reset}'
+			''
 		}
 	}
+}
+
+fn tool_result_failed(name string, result string) bool {
+	if _ := tool_error_message(result) { return true }
+	if name == 'Shell' {
+		value := json2.decode[ShellResult](result) or { return true }
+		return value.exit_code != 0 || value.timed_out
+	}
+	return false
+}
+
+fn replace_visible_tool_call(rendered string, replacement string) {
+	print(tool_result_collapse_sequence(rendered, terminal_columns()))
+	println(replacement)
+	flush_stdout()
 }
 
 fn collapse_visible_tool_result(rendered string) {
@@ -215,7 +212,7 @@ fn terminal_columns() int {
 
 fn render_web_search_result(result string) string {
 	decoded := json2.decode[BraveSearchResponse](result) or {
-		return '${tool_style('WebSearch')}◀ WebSearch · ${result.len} bytes received${ansi_reset}'
+		return '${ansi_dim}${result.len} bytes received${ansi_reset}'
 	}
 	mut lines := []string{}
 	for item in decoded.web.results[..min_int(decoded.web.results.len, 5)] {
@@ -224,8 +221,77 @@ fn render_web_search_result(result string) string {
 		if item.description != '' { lines << '  ${item.description}' }
 	}
 	content := if lines.len == 0 { 'No results.' } else { lines.join('\n') }
-	return '${tool_style('WebSearch')}◀ WebSearch · ${decoded.web.results.len} results${ansi_reset}\n${render_preview(content,
-		2048, 24)}'
+	return render_preview(content, 2048, 24)
+}
+
+fn render_edit_diff(arguments string) string {
+	args := json2.decode[EditArguments](arguments) or { return '' }
+	language := args.path.all_after_last('.').to_lower()
+	mut lines := []string{}
+	for line in args.old.split_into_lines() {
+		lines << '\x1b[31m- ${ansi_reset}${highlight_code_line(line, language)}'
+	}
+	for line in args.replacement.split_into_lines() {
+		lines << '\x1b[32m+ ${ansi_reset}${highlight_code_line(line, language)}'
+	}
+	return truncate_rendered_lines(lines, 2048, 24)
+}
+
+fn highlight_code_line(line string, language string) string {
+	_ = language
+	mut result := ''
+	mut token := ''
+	mut quote := u8(0)
+	keywords := ['fn', 'struct', 'interface', 'enum', 'import', 'module', 'pub', 'mut', 'return',
+		'if', 'else', 'for', 'match', 'const', 'type', 'class', 'def', 'func', 'var', 'let']
+	for character in line.bytes() {
+		if quote != 0 {
+			token += character.ascii_str()
+			if character == quote {
+				result += '\x1b[33m${token}${ansi_reset}'
+				token = ''
+				quote = 0
+			}
+		} else if character in [`'`, `"`] {
+			result += highlight_code_token(token, keywords)
+			token = character.ascii_str()
+			quote = character
+		} else if character.is_alnum() || character == `_` {
+			token += character.ascii_str()
+		} else {
+			result += highlight_code_token(token, keywords) + character.ascii_str()
+			token = ''
+		}
+	}
+	if quote != 0 {
+		result += '\x1b[33m${token}${ansi_reset}'
+	} else {
+		result += highlight_code_token(token, keywords)
+	}
+	return result
+}
+
+fn highlight_code_token(token string, keywords []string) string {
+	if token == '' { return '' }
+	if token in keywords { return '\x1b[36m${token}${ansi_reset}' }
+	if token.bytes().all(it.is_digit()) { return '\x1b[35m${token}${ansi_reset}' }
+	return token
+}
+
+fn truncate_rendered_lines(lines []string, max_bytes int, max_lines int) string {
+	mut shown := []string{}
+	mut used := 0
+	for line in lines {
+		plain_len := sanitize_terminal(line).len
+		if shown.len >= max_lines || used + plain_len > max_bytes { break
+		 }
+		shown << line
+		used += plain_len + 1
+	}
+	if shown.len < lines.len {
+		shown << '${ansi_dim}… ${lines.len - shown.len} diff lines hidden${ansi_reset}'
+	}
+	return shown.join('\n')
 }
 
 fn render_preview(value string, max_bytes int, max_lines int) string {
@@ -277,15 +343,4 @@ fn tool_error_message(result string) ?string {
 	message := json_field(result, 'error')
 	if message == '' { return none }
 	return message
-}
-
-fn tool_style(name string) string {
-	color := match name {
-		'Shell' { '33' }
-		'Read' { '36' }
-		'Edit' { '35' }
-		'WebSearch' { '34' }
-		else { '37' }
-	}
-	return '\x1b[${color}m${ansi_bold}'
 }

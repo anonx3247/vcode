@@ -49,6 +49,7 @@ pub fn run_tui(meta SessionMeta) ! {
 	mut state := TuiState{
 		meta: meta
 	}
+	defer { println('Session: ${state.meta.id}') }
 	println(footer(state.meta.model, state.meta.cwd, 0))
 	println('Commands: /model [model], /skill [skill-name], /resume, /goal, /review; /quit exits')
 	for {
@@ -58,7 +59,10 @@ pub fn run_tui(meta SessionMeta) ! {
 		 }
 		if line == '/quit' { return }
 		if line.starts_with('/') {
-			message := handle_tui_command(mut state, line)!
+			message := handle_tui_command(mut state, line) or {
+				eprintln('${err}')
+				continue
+			}
 			if message != '' { println(message) }
 			continue
 		}

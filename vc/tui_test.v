@@ -68,6 +68,15 @@ fn test_direct_model_selection_does_not_discover_models() {
 	assert state.meta.model == 'isara:test'
 }
 
+fn test_unknown_tui_command_is_reported_to_the_caller() {
+	mut state := TuiState{}
+	if _ := handle_tui_command(mut state, '/wat') {
+		assert false
+	} else {
+		assert err.msg() == 'unknown command: /wat'
+	}
+}
+
 fn test_terminal_control_corpus_is_removed() {
 	for sample in ['\033]0;owned\007', '\033[31mred\033[0m', '\000x', '\033[999999z'] {
 		clean := sanitize_terminal(sample)

@@ -89,13 +89,18 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 			if call.call_id == '' { return error('tool call did not include a call_id') }
 			collapse_visible_tool_result(display.expanded_result)
 			display.expanded_result = ''
-			println(render_tool_call(call.name, call.arguments))
+			call_line := render_tool_call(call.name, call.arguments)
+			println(call_line)
 			result := execute_agent_tool(call.name, call.arguments, cwd) or {
 				'{"error":"${json_escape(err.msg())}"}'
 			}
+			if tool_result_failed(call.name, result) {
+				replace_visible_tool_call(call_line, render_failed_tool_call(call.name,
+					call.arguments))
+			}
 			if call.name != 'Read' {
-				display.expanded_result = render_tool_result(call.name, result)
-				println(display.expanded_result)
+				display.expanded_result = render_tool_result(call.name, result, call.arguments)
+				if display.expanded_result != '' { println(display.expanded_result) }
 			}
 			outputs << '{"type":"function_call_output","call_id":"${json_escape(call.call_id)}","output":"${json_escape(result)}"}'
 			tool_calls++
