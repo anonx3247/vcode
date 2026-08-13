@@ -11,6 +11,10 @@ fn main() {
 }
 
 fn run(args []string) ! {
+	if args.len > 0 && args[0] in ['--help', '-h', 'help'] {
+		print_help()
+		return
+	}
 	if args.len > 0 && args[0] == '--worker' {
 		if args.len != 2 { return error('usage: vc --worker <session-id>') }
 		vc.serve_session(args[1])!
@@ -33,6 +37,18 @@ fn run(args []string) ! {
 		return
 	}
 	start_prompt(args.join(' '))!
+}
+
+fn print_help() {
+	println('vc - compact coding agent')
+	println('')
+	println('Usage:')
+	println('  vc [prompt]')
+	println('  vc model list')
+	println('  vc model set <provider:model> [--effort <level>]')
+	println('  vc session list')
+	println('  vc session attach <id> [--move-session]')
+	println('  vc --rpc')
 }
 
 fn run_model(args []string) ! {

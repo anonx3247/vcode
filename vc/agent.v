@@ -86,11 +86,11 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 		mut outputs := []string{}
 		for call in response.calls {
 			if call.call_id == '' { return error('tool call did not include a call_id') }
-			println('▶ ${call.name} ${visible_tool_text(call.arguments, 4096)}')
+			println(render_tool_call(call.name, call.arguments))
 			result := execute_agent_tool(call.name, call.arguments, cwd) or {
 				'{"error":"${json_escape(err.msg())}"}'
 			}
-			println('◀ ${call.name} ${visible_tool_text(result, 8192)}')
+			println(render_tool_result(call.name, result))
 			outputs << '{"type":"function_call_output","call_id":"${json_escape(call.call_id)}","output":"${json_escape(result)}"}'
 			tool_calls++
 		}
@@ -188,10 +188,6 @@ fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStre
 		}
 	}
 	return updated_error
-}
-
-fn visible_tool_text(value string, limit int) string {
-	return sanitize_terminal(bounded_text(value, limit)).replace('\r', '').trim_space()
 }
 
 fn json_array_field(source string, name string) !string {
