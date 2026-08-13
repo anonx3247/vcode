@@ -53,6 +53,7 @@ pub fn run_tui(meta SessionMeta) ! {
 	defer { println('Session: ${state.meta.id}') }
 	println(footer(state.meta.model, state.meta.cwd, 0))
 	println('Commands: /model [model], /skill [skill-name], /resume, /goal, /review; /quit exits')
+	if state.meta.recap != '' { println('Recap: ${state.meta.recap}') }
 	for {
 		print('> ')
 		line := os.get_line().trim_space()
@@ -126,7 +127,7 @@ pub fn handle_tui_command(mut state TuiState, command string) !string {
 			}
 			state.meta = resumed
 			start_session_worker(id) or {}
-			return 'resumed ${id}'
+			return if resumed.recap == '' { 'resumed ${id}' } else { 'Recap: ${resumed.recap}' }
 		}
 		'/goal' {
 			mut goal := load_goal(state.meta.id)

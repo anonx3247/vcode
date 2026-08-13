@@ -23,6 +23,7 @@ struct BraveSearchResult {
 struct ToolDisplayState {
 mut:
 	expanded_result string
+	markdown        MarkdownStreamState
 }
 
 fn render_tool_call(name string, arguments string) string {

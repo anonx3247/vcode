@@ -67,15 +67,16 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 	if kind != 'openai' {
 		events := stream_completion(model_ref, prompt, cfg)!
 		mut answer := ''
+		mut markdown := MarkdownStreamState{}
+		markdown.begin()
 		for event in events {
 			if event.kind == .text {
 				answer += event.text
-				print(event.text)
+				print(markdown.push(event.text, terminal_columns()))
 				flush_stdout()
 			}
 			if event.kind == .error { return error(event.text) }
 		}
-		if answer != '' { println('') }
 		return AgentTurnResult{
 			answer:   answer
 			streamed: true
@@ -90,8 +91,8 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 	mut display := ToolDisplayState{}
 	mut history := []AgentHistoryEvent{}
 	for _ in 0 .. 32 {
+		display.markdown.begin()
 		response := stream_agent_response(base_url, key, body, mut display)!
-		if response.answer != '' { println('') }
 		mut outputs := []string{}
 		for call in response.calls {
 			if call.call_id == '' { return error('tool call did not include a call_id') }
@@ -209,7 +210,7 @@ fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStre
 		} else if type_name == 'response.output_text.delta' {
 			delta := json_field(message.data, 'delta')
 			result.answer += delta
-			print(delta)
+			print(display.markdown.push(delta, terminal_columns()))
 			flush_stdout()
 		} else if type_name == 'response.completed' {
 			result.raw_output = json_array_field(message.data, 'output')!

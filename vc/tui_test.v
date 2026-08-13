@@ -10,8 +10,34 @@ fn test_markdown_and_mermaid_snapshots() {
 	assert joined.contains('TITLE')
 	assert joined.contains('[Start] → [Done]')
 	assert joined.contains('$x^2$')
+	assert joined.contains('\033[1;36mTITLE')
 	narrow := renderer.render('one', '| a long cell | b |', 16)
 	assert narrow.len > 0
+}
+
+fn test_markdown_highlights_inline_and_fenced_code() {
+	mut renderer := MarkdownRenderer{}
+	rendered := renderer.render('highlight',
+		'Use **bold** and `inline_code`.\n\n```v\nfn main() { println("hi") }\n```\n\n```sh\nrg --files | head\n```', 80).join('\n')
+	plain := sanitize_terminal(rendered)
+	assert plain.contains('Use bold and inline_code.')
+	assert plain.contains('fn main()')
+	assert plain.contains('rg --files | head')
+	assert rendered.contains('\033[1m')
+	assert rendered.contains('\033[36minline_code')
+	assert rendered.contains('\033[36mfn')
+	assert rendered.contains('\033[35m--files')
+}
+
+fn test_streaming_markdown_replaces_the_incomplete_render() {
+	mut stream := MarkdownStreamState{}
+	stream.begin()
+	first := stream.push('```v\nfn main()', 80)
+	second := stream.push(' {}\n```', 80)
+	assert sanitize_terminal(first).contains('```v')
+	assert second.starts_with('\033[')
+	assert sanitize_terminal(second).contains('fn main() {}')
+	assert second.contains('\033[36mfn')
 }
 
 fn test_incomplete_fence_and_sanitization() {

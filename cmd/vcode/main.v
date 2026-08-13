@@ -32,6 +32,10 @@ fn run(args []string) ! {
 		run_session(args[1..])!
 		return
 	}
+	if args.len > 0 && args[0] == 'resume' {
+		run_resume(args[1..])!
+		return
+	}
 	if args.len == 0 {
 		start_empty_session()!
 		return
@@ -47,7 +51,8 @@ fn print_help() {
 	println('  vc model list')
 	println('  vc model set <provider:model> [--effort <level>]')
 	println('  vc session list')
-	println('  vc session attach <id> [--move-session]')
+	println('  vc resume <id> [--move-session]')
+	println('  vc session attach <id>')
 	println('  vc --rpc')
 }
 
@@ -81,30 +86,34 @@ fn run_session(args []string) ! {
 		return
 	}
 	if args.len >= 2 && args[0] == 'attach' {
-		mut meta := vc.load_session_meta(args[1])!
-		if os.real_path(os.getwd()) != meta.cwd {
-			move_allowed := '--move-session' in args
-			mut confirmed := move_allowed
-			if !move_allowed && os.is_atty(0) > 0 {
-				print('Move session from ${meta.cwd} to ${os.getwd()}? [y/N] ')
-				confirmed = os.get_line().trim_space().to_lower() in ['y', 'yes']
-			}
-			if confirmed {
-				mut worker := vc.new_session_worker(meta)!
-				_ =
-					worker.handle_rpc('{"jsonrpc":"2.0","id":1,"method":"session.move","params":{"cwd":"${escape(os.getwd())}"}}')
-				meta = worker.meta
-			}
-		}
+		meta := vc.load_session_meta(args[1])!
 		vc.start_session_worker(meta.id) or {}
-		if os.is_atty(0) > 0 {
-			vc.run_tui(meta)!
-		} else {
-			println('attached ${meta.id} (${meta.model}) in ${meta.cwd}')
-		}
+		println('attached ${meta.id} (${meta.model}) in ${meta.cwd}')
 		return
 	}
 	return error('usage: vc session list | vc session attach <id>')
+}
+
+fn run_resume(args []string) ! {
+	if args.len == 0 { return error('usage: vc resume <id> [--move-session]') }
+	mut meta := vc.load_session_meta(args[0])!
+	if os.real_path(os.getwd()) != meta.cwd {
+		move_allowed := '--move-session' in args
+		mut confirmed := move_allowed
+		if !move_allowed && os.is_atty(0) > 0 {
+			print('Move session from ${meta.cwd} to ${os.getwd()}? [y/N] ')
+			confirmed = os.get_line().trim_space().to_lower() in ['y', 'yes']
+		}
+		if confirmed {
+			mut worker := vc.new_session_worker(meta)!
+			_ =
+				worker.handle_rpc('{"jsonrpc":"2.0","id":1,"method":"session.move","params":{"cwd":"${escape(os.getwd())}"}}')
+			meta = worker.meta
+		}
+	}
+	vc.start_session_worker(meta.id)!
+	if os.is_atty(0) <= 0 { return error('vc resume requires a terminal') }
+	vc.run_tui(meta)!
 }
 
 fn start_prompt(prompt string) ! {
@@ -122,11 +131,15 @@ fn start_prompt(prompt string) ! {
 	for event in events {
 		if event.kind == .text {
 			answer += event.text
-			print(event.text)
 		}
 	}
 	if answer != '' {
-		println('')
+		if os.is_atty(1) > 0 {
+			mut renderer := vc.MarkdownRenderer{}
+			println(renderer.render('initial', answer, 80).join('\n'))
+		} else {
+			println(answer)
+		}
 		assistant := worker.events.push('assistant', answer)
 		worker.journal.append(assistant.seq, assistant.kind, assistant.data)!
 	}

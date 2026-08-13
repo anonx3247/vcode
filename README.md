@@ -17,13 +17,15 @@ vc [options] <prompt>
 vc model list
 vc model set <provider:model> [--effort <level>]
 vc session list
-vc session attach <id> [--move-session]
+vc resume <id> [--move-session]
+vc session attach <id>
 vc --rpc
 ```
 
 The interactive UI provides `/model [provider:model]`, `/skill [skill-name]`, `/resume`, `/goal`, and `/review`. `/model`, `/skill`, and `/resume` use `fzf`; ordinary CLI lists stay plain and pipe-friendly. Skills are discovered at startup but their contents are read only after an explicit `/skill` command.
 Running `vc` without a prompt starts a new interactive session. If its configured default provider is unavailable, it opens the model picker before creating the session.
 Each turn replays a bounded projection of the session's user, assistant, system, and tool history. The full transcript remains in the append-only journal. Session recaps are generated after the first completed turn and refreshed after ten active minutes; `/resume` shows the recap first.
+`vc resume <id>` reopens the conversational TUI and prints its recap before the prompt. `vc session attach <id>` only attaches to the persistent worker for live RPC use.
 
 Example configuration:
 
