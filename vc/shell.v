@@ -43,7 +43,7 @@ pub fn (mut manager ShellJobManager) start(command string, cwd string) !string {
 	id := 'job-${manager.next}'
 	manager.next++
 	mut process := os.new_process(login_shell())
-	process.set_args(['-lic', command])
+	process.set_args(['-lc', command])
 	process.set_work_folder(cwd)
 	process.set_redirect_stdio()
 	process.use_pgroup = true
@@ -96,7 +96,7 @@ fn append_job_output(mut job ShellJob, addition string, limit int) {
 
 pub fn run_shell(command string, cwd string, timeout time.Duration, max_output int) ShellResult {
 	mut process := os.new_process(login_shell())
-	process.set_args(['-lic', command])
+	process.set_args(['-lc', command])
 	process.set_work_folder(cwd)
 	process.set_redirect_stdio()
 	process.use_pgroup = true

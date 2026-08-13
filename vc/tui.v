@@ -183,16 +183,9 @@ fn run_tui_turn(mut state TuiState, message string) ! {
 		prompt += '\nThe user explicitly activated this skill:\n' + state.skill_content
 	}
 	prompt += '\nUser request:\n' + message
-	events := stream_completion(state.meta.model, prompt, load_config(config_path())!)!
-	mut answer := ''
-	for event in events {
-		if event.kind == .text {
-			answer += event.text
-			print(event.text)
-		}
-		if event.kind == .error { return error(event.text) }
-	}
-	println('')
+	result := run_agent_turn(state.meta.model, prompt, state.meta.cwd, load_config(config_path())!)!
+	answer := result.answer
+	println(answer)
 	if os.exists(socket_path(state.meta.id)) {
 		_ = socket_rpc(state.meta.id,
 			'{"jsonrpc":"2.0","id":2,"method":"session.append","params":{"kind":"assistant","data":"${json_escape(answer)}"}}') or {
