@@ -32,12 +32,13 @@ fn test_markdown_highlights_inline_and_fenced_code() {
 fn test_streaming_markdown_replaces_the_incomplete_render() {
 	mut stream := MarkdownStreamState{}
 	stream.begin()
-	first := stream.push('```v\nfn main()', 80)
-	second := stream.push(' {}\n```', 80)
-	assert sanitize_terminal(first).contains('```v')
-	assert second.starts_with('\033[')
+	first := stream.push('# Title\n```v\nfn main()', 80)
+	second := stream.push(' {}\n```\n', 80)
+	assert sanitize_terminal(first).trim_space() == 'TITLE'
 	assert sanitize_terminal(second).contains('fn main() {}')
 	assert second.contains('\033[36mfn')
+	assert !second.contains('\033[A')
+	assert stream.finish(80) == ''
 }
 
 fn test_incomplete_fence_and_sanitization() {

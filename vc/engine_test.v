@@ -41,6 +41,33 @@ fn test_edit_requires_fresh_read() {
 	assert false
 }
 
+fn test_read_defaults_to_3000_lines_and_supports_ranges() {
+	path := os.join_path(os.temp_dir(), 'vc-read-range-${os.getpid()}')
+	defer { os.rm(path) or {} }
+	mut lines := []string{cap: 4000}
+	for index in 1 .. 4001 {
+		lines << 'line-${index}'
+	}
+	os.write_file(path, lines.join('\n')) or { panic(err) }
+	first := read_tool(path, 1024 * 1024) or { panic(err) }
+	assert first.start == 1
+	assert first.end == 3000
+	assert first.total_lines == 4000
+	assert first.content.contains('line-1')
+	assert first.content.ends_with('line-3000')
+	assert !first.content.contains('line-3001')
+	assert first.truncated
+	range := read_tool_range(path, 3001, 3010, 1024 * 1024) or { panic(err) }
+	assert range.content.starts_with('line-3001')
+	assert range.content.ends_with('line-3010')
+	assert range.content.split_into_lines().len == 10
+	read_tool_range(path, 20, 10, 1024) or {
+		assert err.msg().contains('end')
+		return
+	}
+	assert false
+}
+
 fn test_shell_timeout_and_working_directory() {
 	result := run_shell('pwd', os.temp_dir(), 2 * time.second, 4096)
 	assert result.exit_code == 0

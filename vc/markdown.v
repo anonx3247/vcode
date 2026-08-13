@@ -8,29 +8,48 @@ pub mut:
 struct MarkdownStreamState {
 mut:
 	renderer MarkdownRenderer
-	source   string
-	rendered string
+	pending  string
 	id       u64
 }
 
 fn (mut state MarkdownStreamState) begin() {
 	state.id++
-	state.source = ''
-	state.rendered = ''
+	state.pending = ''
 }
 
 fn (mut state MarkdownStreamState) push(delta string, width int) string {
-	state.source += delta
-	message_id := 'stream-${state.id}'
-	state.renderer.invalidate(message_id)
-	next := state.renderer.render(message_id, state.source, width).join('\n')
-	mut output := ''
-	if state.rendered != '' {
-		output += tool_result_collapse_sequence(state.rendered, width)
+	state.pending += delta
+	return state.drain(width, false)
+}
+
+fn (mut state MarkdownStreamState) finish(width int) string {
+	return state.drain(width, true)
+}
+
+fn (mut state MarkdownStreamState) drain(width int, final bool) string {
+	if state.pending == '' { return '' }
+	mut safe_end := 0
+	mut line_start := 0
+	mut in_fence := false
+	for index, character in state.pending {
+		if character != `\n` { continue
+		 }
+		line := state.pending[line_start..index].trim_space()
+		if line.starts_with('```') {
+			in_fence = !in_fence
+			if !in_fence { safe_end = index + 1 }
+		} else if !in_fence {
+			safe_end = index + 1
+		}
+		line_start = index + 1
 	}
-	output += next + '\n'
-	state.rendered = next
-	return output
+	if final { safe_end = state.pending.len }
+	if safe_end == 0 { return '' }
+	chunk := state.pending[..safe_end]
+	state.pending = state.pending[safe_end..]
+	message_id := 'stream-${state.id}-${safe_end}'
+	rendered := state.renderer.render(message_id, chunk, width).join('\n')
+	return if rendered == '' { '' } else { rendered + '\n' }
 }
 
 pub fn (mut renderer MarkdownRenderer) render(message_id string, source string, width int) []string {

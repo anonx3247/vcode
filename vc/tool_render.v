@@ -34,7 +34,19 @@ fn render_tool_call(name string, arguments string) string {
 		}
 		'Read' {
 			args := json2.decode[ReadArguments](arguments) or { ReadArguments{} }
-			args.path
+			if args.start > 0 || args.end > 0 {
+				'${args.path}:${if args.start > 0 {
+					args.start
+				} else {
+					1
+				}}-${if args.end > 0 {
+					args.end
+				} else {
+					args.start + 2999
+				}}'
+			} else {
+				args.path
+			}
 		}
 		'Edit' {
 			args := json2.decode[EditArguments](arguments) or { EditArguments{} }

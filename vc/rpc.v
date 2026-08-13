@@ -111,7 +111,8 @@ fn (mut worker SessionWorker) dispatch(method string, params string) !string {
 		}
 		'session.read' {
 			path := json_field(params, 'path')
-			read := read_tool(path, 1024 * 1024)!
+			read := read_tool_range(path, json_int_field(params, 'start'), json_int_field(params,
+				'end'), 1024 * 1024)!
 			worker.fingerprints[read.path] = read.fingerprint
 			return json2.encode(read, escape_unicode: true)
 		}

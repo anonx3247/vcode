@@ -10,18 +10,35 @@ pub:
 	content     string
 	fingerprint string
 	truncated   bool
+	start       int
+	end         int
+	total_lines int
 }
 
 pub fn read_tool(path string, max_bytes int) !ReadResult {
+	return read_tool_range(path, 1, 3000, max_bytes)
+}
+
+pub fn read_tool_range(path string, requested_start int, requested_end int, max_bytes int) !ReadResult {
 	real := os.real_path(path)
 	content := os.read_file(real)!
+	start := if requested_start > 0 { requested_start } else { 1 }
+	end := if requested_end > 0 { requested_end } else { start + 2999 }
+	if end < start { return error('Read end must be greater than or equal to start') }
+	lines := content.split_into_lines()
+	from := min_int(start - 1, lines.len)
+	to := min_int(end, lines.len)
+	selected := if from < to { lines[from..to].join('\n') } else { '' }
 	limit := if max_bytes > 0 { max_bytes } else { 1024 * 1024 }
-	shown := if content.len > limit { content[..limit] } else { content }
+	shown := safe_text_prefix(selected, limit)
 	return ReadResult{
 		path:        real
 		content:     shown
 		fingerprint: sha256.hexhash(content)
-		truncated:   content.len > limit
+		truncated:   start > 1 || to < lines.len || shown.len < selected.len
+		start:       start
+		end:         to
+		total_lines: lines.len
 	}
 }
 

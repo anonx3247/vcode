@@ -68,7 +68,10 @@ pub fn run_tui(meta SessionMeta) ! {
 			if message != '' { println(message) }
 			continue
 		}
-		run_tui_turn(mut state, line)!
+		run_tui_turn(mut state, line) or {
+			eprintln('turn: ${err}')
+			continue
+		}
 	}
 }
 

@@ -23,7 +23,9 @@ struct ResponsesContent {
 }
 
 struct ReadArguments {
-	path string
+	path  string
+	start int
+	end   int
 }
 
 struct EditArguments {
@@ -77,6 +79,8 @@ pub fn run_agent_turn(model_ref string, prompt string, cwd string, cfg Config) !
 			}
 			if event.kind == .error { return error(event.text) }
 		}
+		print(markdown.finish(terminal_columns()))
+		flush_stdout()
 		return AgentTurnResult{
 			answer:   answer
 			streamed: true
@@ -213,6 +217,8 @@ fn consume_agent_stream(chunk string, mut parser SseParser, mut result AgentStre
 			print(display.markdown.push(delta, terminal_columns()))
 			flush_stdout()
 		} else if type_name == 'response.completed' {
+			print(display.markdown.finish(terminal_columns()))
+			flush_stdout()
 			result.raw_output = json_array_field(message.data, 'output')!
 			decoded := json2.decode[ResponsesApiResponse]('{"output":[${result.raw_output}]}')!
 			for item in decoded.output {
@@ -265,7 +271,8 @@ fn execute_agent_tool(name string, arguments string, cwd string) !string {
 		'Read' {
 			args := json2.decode[ReadArguments](arguments)!
 			if args.path == '' { return error('Read requires path') }
-			json2.encode(read_tool(resolve_tool_path(cwd, args.path), 256 * 1024)!,
+			json2.encode(read_tool_range(resolve_tool_path(cwd, args.path), args.start, args.end,
+				256 * 1024)!,
 				escape_unicode: true
 			)
 		}
@@ -300,5 +307,5 @@ fn resolve_tool_path(cwd string, path string) string {
 }
 
 fn agent_tool_definitions() string {
-	return '[{"type":"function","name":"Read","description":"Read a file and return its content and freshness fingerprint.","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}},{"type":"function","name":"Edit","description":"Replace one exact occurrence in a file previously read with Read.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"replacement":{"type":"string"},"fingerprint":{"type":"string"}},"required":["path","old","replacement","fingerprint"],"additionalProperties":false}},{"type":"function","name":"Shell","description":"Run a command in an isolated login shell in the session working directory.","parameters":{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}},{"type":"function","name":"WebSearch","description":"Search the web with Brave Search.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]'
+	return '[{"type":"function","name":"Read","description":"Read a 1-based inclusive line range from a file and return its content and whole-file freshness fingerprint. Defaults to the first 3000 lines.","parameters":{"type":"object","properties":{"path":{"type":"string"},"start":{"type":"integer","minimum":1},"end":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false}},{"type":"function","name":"Edit","description":"Replace one exact occurrence in a file previously read with Read.","parameters":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"replacement":{"type":"string"},"fingerprint":{"type":"string"}},"required":["path","old","replacement","fingerprint"],"additionalProperties":false}},{"type":"function","name":"Shell","description":"Run a command in an isolated login shell in the session working directory.","parameters":{"type":"object","properties":{"command":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["command"],"additionalProperties":false}},{"type":"function","name":"WebSearch","description":"Search the web with Brave Search.","parameters":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}}]'
 }

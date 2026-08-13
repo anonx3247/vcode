@@ -17,12 +17,11 @@ pub fn serve_session(id string) ! {
 	defer { listener.close() or {} }
 	for !worker.shutdown {
 		mut connection := listener.accept() or { continue }
-		mut buffer := []u8{len: 1024 * 1024}
-		read := connection.read(mut buffer) or {
+		payload := read_socket_line(mut connection, 2 * 1024 * 1024) or {
 			connection.close() or {}
 			continue
 		}
-		for line in buffer[..read].bytestr().split_into_lines() {
+		for line in payload.split_into_lines() {
 			if line.trim_space() == '' { continue
 			 }
 			connection.write_string(worker.handle_rpc(line) + '\n') or { break }
@@ -35,9 +34,21 @@ pub fn socket_rpc(id string, request string) !string {
 	mut connection := unix.connect_stream(socket_path(id))!
 	defer { connection.close() or {} }
 	connection.write_string(request + '\n')!
-	mut buffer := []u8{len: 1024 * 1024}
-	read := connection.read(mut buffer)!
-	return buffer[..read].bytestr().trim_space()
+	return read_socket_line(mut connection, 2 * 1024 * 1024)!.trim_space()
+}
+
+fn read_socket_line(mut connection unix.StreamConn, max_bytes int) !string {
+	mut result := ''
+	mut buffer := []u8{len: 64 * 1024}
+	for result.len <= max_bytes {
+		read := connection.read(mut buffer)!
+		if read <= 0 { break
+		 }
+		result += buffer[..read].bytestr()
+		if result.contains('\n') { return result.all_before('\n') }
+	}
+	if result.len > max_bytes { return error('session RPC message exceeds ${max_bytes} bytes') }
+	return result
 }
 
 pub fn start_session_worker(id string) ! {

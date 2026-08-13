@@ -15,6 +15,14 @@ fn test_agent_request_is_zdr_compatible() {
 	assert !body.contains('previous_response_id')
 }
 
+fn test_read_tool_schema_exposes_optional_line_range() {
+	tools := agent_tool_definitions()
+	assert tools.contains('"name":"Read"')
+	assert tools.contains('"start":{"type":"integer"')
+	assert tools.contains('"end":{"type":"integer"')
+	assert tools.contains('Defaults to the first 3000 lines')
+}
+
 fn test_agent_stream_collects_text_and_completed_tool_calls() {
 	mut parser := new_sse_parser(4096)
 	mut result := AgentStreamResponse{}

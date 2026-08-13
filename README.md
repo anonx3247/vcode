@@ -47,6 +47,8 @@ api_key_env = "OPENAI_API_KEY"
 API keys can be set in provider configuration or supplied as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `BRAVE_API_KEY` environment variables.
 `vc model list` queries only providers declared in this file, caches successful results for 15 minutes, and reports discovery failures instead of inventing fallback models.
 
+The `Read` tool accepts optional 1-based inclusive `start` and `end` line numbers. Without a range it returns at most the first 3000 lines, additionally bounded by the tool's byte limit.
+
 ## Development
 
 Run `scripts/bootstrap-v.sh` to install the pinned compiler under `.tmp/v`, then use `make check`. `scripts/bench.sh` reports warm-start latency and peak RSS.

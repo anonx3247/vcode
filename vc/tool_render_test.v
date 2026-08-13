@@ -33,6 +33,11 @@ fn test_read_tool_card_does_not_show_raw_json() {
 	assert !plain.contains('{"path"')
 }
 
+fn test_read_tool_card_shows_an_explicit_line_range() {
+	plain := sanitize_terminal(render_tool_call('Read', '{"path":"README.md","start":25,"end":80}'))
+	assert plain == 'Read README.md:25-80'
+}
+
 fn test_tool_result_collapse_rewinds_and_clears_rendered_rows() {
 	sequence := tool_result_collapse_sequence('first\nsecond\nthird', 80)
 	assert sequence == '\x1b[3A\r\x1b[J'
